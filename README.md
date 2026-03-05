@@ -4,30 +4,84 @@
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A terminal dashboard for homelab servers. Built with [Go](https://go.dev) and the [Charm](https://charm.sh) stack.
+A terminal dashboard for single-host Linux homelabs.
 
-Zero external dependencies for data collection — reads directly from `/proc`, the Docker unix socket, and [wttr.in](https://wttr.in).
+HomeDash combines host metrics, Docker Compose stacks, container logs, and common container actions in one TUI. It is built for people running a personal server who want one operational view instead of jumping between `docker ps`, `docker logs`, `htop`, and ad-hoc scripts.
 
-<img width="800" alt="HomeDash dashboard" src="docs/screenshots/dashboard-overview.png" />
+It reads system data from `/proc`, talks directly to the Docker socket, and optionally fetches weather from [wttr.in](https://wttr.in).
+
+> Status: early-stage, Linux-only, source install for now.
+
+## Who It's For
+
+- people running a personal or home Linux server
+- Docker Compose users who think in stacks more than raw Docker objects
+- users who prefer terminal workflows over web dashboards
+
+## Non-Goals
+
+- replacing `lazydocker` as a general Docker admin console
+- managing clusters, Kubernetes, or multi-host fleets
+- being a generic monitoring platform
+
+## Screenshots
+
+### Dashboard Overview
+
+<img width="800" alt="HomeDash dashboard overview" src="docs/screenshots/dashboard-overview.png" />
+
+Host metrics, Compose-stack grouping, and container state in one view.
+
+### Container Detail And Actions
 
 <p>
-<img width="395" alt="Container logs" src="docs/screenshots/container-detail.png" />
-<img width="395" alt="Container actions" src="docs/screenshots/quick-actions.png" />
+<img width="395" alt="HomeDash container detail view" src="docs/screenshots/container-detail.png" />
+<img width="395" alt="HomeDash quick actions menu" src="docs/screenshots/quick-actions.png" />
 </p>
+
+Full-screen logs, container metadata, and quick actions without leaving the TUI.
 
 ## Features
 
-- **System metrics** — CPU (with sparkline history), RAM, disk usage, network I/O, uptime
-- **Docker containers** — grouped by compose stack, collapsible, live CPU/memory stats
-- **Container detail view** — full-screen log viewer with follow mode, port mappings, mounts, start/stop/restart actions
-- **Container search** — filter containers by name with `/`
-- **Quick-action menu** — `space` to open, manage containers without leaving the dashboard
-- **Notifications** — non-intrusive bar for Docker state changes, disk warnings, weather errors
-- **Weather** — current conditions via [wttr.in](https://wttr.in)
-- **Mouse support** — click to select, scroll wheel navigation, double-click to open detail view
-- **Themes** — Tokyo Night (default), Catppuccin Mocha, Dracula
-- **Responsive layout** — adapts from ~40 to 200+ column terminals
-- **State persistence** — collapsed stack groups remembered across sessions
+- **Unified homelab view** - host metrics, Docker containers, and quick actions in one terminal UI
+- **Compose-stack grouping** - containers grouped by `com.docker.compose.project`, with collapsible stacks
+- **Container detail view** - full-screen log viewer with follow mode, port mappings, mounts, and start/stop/restart actions
+- **Quick-action menu** - `space` opens fast container actions without leaving the dashboard
+- **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
+- **Container search** - filter containers by name with `/`
+- **Notifications** - Docker state changes, disk warnings, and weather errors
+- **Weather** - current conditions via [wttr.in](https://wttr.in)
+- **Responsive layout** - works across narrow and wide terminals
+- **State persistence** - collapsed stack groups are remembered across sessions
+- **Themes and mouse support** - Tokyo Night, Catppuccin, Dracula, plus click and scroll navigation
+
+## Status
+
+HomeDash is early-stage, but usable for day-to-day homelab monitoring and container operations.
+
+Current scope:
+
+- Linux only
+- single host only
+- Docker and Docker Compose focused
+- source install first
+
+Expect ongoing UI and feature changes while the project settles.
+
+## Roadmap
+
+Near term:
+
+- stack-level actions and summaries
+- more detail-view polish for logs and metadata
+- packaging and release improvements
+- more test coverage around UI layout and Docker edge cases
+
+Not planned:
+
+- Kubernetes support
+- multi-host orchestration
+- generic Docker object management beyond the homelab workflow
 
 ## Install
 
@@ -128,7 +182,7 @@ system:
 wttr.in JSON API               ──5min──>  Weather panel
 ```
 
-All data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands — no background goroutines or channels. Docker container stats are fetched in parallel with a 5-worker pool.
+Most data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses a streaming goroutine tied to the active detail view.
 
 Containers are grouped by the `com.docker.compose.project` label, so any compose-based setup works automatically. Standalone containers appear ungrouped.
 
