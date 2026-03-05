@@ -1,0 +1,93 @@
+package panels
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/kostas/homedash/internal/collector"
+	"github.com/kostas/homedash/internal/ui/styles"
+)
+
+func RenderHeader(data collector.SystemData, width int) string {
+	bg := styles.BgPanel
+	fg := styles.TextPrimary
+
+	base := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(fg).
+		Width(width)
+
+	titleStyle := lipgloss.NewStyle().
+		Background(styles.Primary).
+		Foreground(styles.TextInverse).
+		Bold(true).
+		Padding(0, 1)
+
+	sepStyle := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(styles.TextMuted)
+
+	infoStyle := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(styles.TextSecondary)
+
+	timeStyle := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(styles.Info).
+		Bold(true)
+
+	title := titleStyle.Render("HOMEDASH")
+	sep := sepStyle.Render("  │  ")
+	clock := timeStyle.Render(time.Now().Format("15:04:05"))
+	clockWidth := lipgloss.Width(clock)
+	clockReserved := clockWidth + 2 // minimum gap before clock
+
+	// Build left side incrementally — stop adding when it would overflow
+	left := title
+	extras := []string{
+		infoStyle.Render(data.Hostname),
+		infoStyle.Render(fmt.Sprintf("up %s", formatUptime(data.Uptime))),
+		infoStyle.Render(fmt.Sprintf("%d CPU / %s RAM",
+			data.CPUCount,
+			collector.FormatBytes(data.MemTotal))),
+	}
+	for _, extra := range extras {
+		candidate := left + sep + extra
+		if lipgloss.Width(candidate)+clockReserved > width {
+			break
+		}
+		left = candidate
+	}
+
+	// Right-align the clock
+	leftWidth := lipgloss.Width(left)
+	gap := width - leftWidth - clockWidth
+	if gap < 1 {
+		// Terminal too narrow even for title + clock — drop the clock
+		row := lipgloss.NewStyle().Inline(true).MaxWidth(width).Render(left)
+		return base.Render(row)
+	}
+
+	spacer := lipgloss.NewStyle().
+		Background(bg).
+		Width(gap).
+		Render("")
+	row := lipgloss.NewStyle().Inline(true).MaxWidth(width).Render(left + spacer + clock)
+
+	return base.Render(row)
+}
+
+func formatUptime(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
+}

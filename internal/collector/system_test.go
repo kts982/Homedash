@@ -1,0 +1,238 @@
+package collector
+
+import (
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/kostas/homedash/internal/config"
+)
+
+func TestFormatBytes(t *testing.T) {
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+		tb = gb * 1024
+	)
+
+	tests := []struct {
+		name string
+		in   uint64
+		want string
+	}{
+		{name: "zero", in: 0, want: "0B"},
+		{name: "bytes", in: 999, want: "999B"},
+		{name: "kb boundary", in: kb, want: "1K"},
+		{name: "kb rounded", in: 1536, want: "2K"},
+		{name: "mb boundary", in: mb, want: "1M"},
+		{name: "gb boundary", in: gb, want: "1.0G"},
+		{name: "tb boundary", in: tb, want: "1.0T"},
+		{name: "multiple tb", in: 12 * tb, want: "12.0T"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := FormatBytes(tc.in)
+			if got != tc.want {
+				t.Fatalf("FormatBytes(%d) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatRate(t *testing.T) {
+	tests := []struct {
+		name string
+		in   float64
+		want string
+	}{
+		{name: "zero", in: 0, want: "0B/s"},
+		{name: "bytes", in: 500, want: "500B/s"},
+		{name: "kilobytes", in: 1024, want: "1K/s"},
+		{name: "megabytes", in: 2.5 * 1024 * 1024, want: "3M/s"},
+		{name: "gigabytes", in: 1.5 * 1024 * 1024 * 1024, want: "1.5G/s"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatRate(tc.in)
+			if got != tc.want {
+				t.Fatalf("FormatRate(%f) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseNetDev(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		wantRx uint64
+		wantTx uint64
+	}{
+		{
+			name: "typical interfaces",
+			input: "Inter-|   Receive                                                |  Transmit\n" +
+				" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+				"    lo: 1000    10    0    0    0     0          0         0  1000    10    0    0    0     0       0          0\n" +
+				"enp10s0: 5000 100    0    0    0     0          0         0  3000   50    0    0    0     0       0          0\n" +
+				"  wg0: 2000  20    0    0    0     0          0         0  1000   10    0    0    0     0       0          0\n" +
+				"docker0:  500   5    0    0    0     0          0         0   300    3    0    0    0     0       0          0\n" +
+				"veth1234: 100   1    0    0    0     0          0         0    50    1    0    0    0     0       0          0\n" +
+				"br-abc123: 200   2    0    0    0     0          0         0   100    1    0    0    0     0       0          0\n",
+			wantRx: 7000,
+			wantTx: 4000,
+		},
+		{
+			name:   "empty input",
+			input:  "",
+			wantRx: 0,
+			wantTx: 0,
+		},
+		{
+			name: "only virtual interfaces",
+			input: "Inter-|   Receive\n" +
+				" face |bytes\n" +
+				"    lo: 1000    10    0    0    0     0          0         0  1000    10    0    0    0     0       0          0\n" +
+				"docker0:  500   5    0    0    0     0          0         0   300    3    0    0    0     0       0          0\n",
+			wantRx: 0,
+			wantTx: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rx, tx := parseNetDev(tc.input)
+			if rx != tc.wantRx {
+				t.Fatalf("parseNetDev() rx = %d, want %d", rx, tc.wantRx)
+			}
+			if tx != tc.wantTx {
+				t.Fatalf("parseNetDev() tx = %d, want %d", tx, tc.wantTx)
+			}
+		})
+	}
+}
+
+func TestParseMemInfo(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		assert func(t *testing.T, got map[string]uint64)
+	}{
+		{
+			name: "valid meminfo",
+			input: "MemTotal:       16384256 kB\n" +
+				"MemFree:         8471092 kB\n" +
+				"MemAvailable:   12123456 kB\n",
+			assert: func(t *testing.T, got map[string]uint64) {
+				t.Helper()
+				if got["MemTotal"] != 16384256 {
+					t.Fatalf("MemTotal = %d, want %d", got["MemTotal"], uint64(16384256))
+				}
+				if got["MemFree"] != 8471092 {
+					t.Fatalf("MemFree = %d, want %d", got["MemFree"], uint64(8471092))
+				}
+				if got["MemAvailable"] != 12123456 {
+					t.Fatalf("MemAvailable = %d, want %d", got["MemAvailable"], uint64(12123456))
+				}
+			},
+		},
+		{
+			name: "missing keys",
+			input: "MemTotal: 1000 kB\n" +
+				"Buffers: 10 kB\n",
+			assert: func(t *testing.T, got map[string]uint64) {
+				t.Helper()
+				if got["MemTotal"] != 1000 {
+					t.Fatalf("MemTotal = %d, want 1000", got["MemTotal"])
+				}
+				if _, ok := got["MemAvailable"]; ok {
+					t.Fatalf("MemAvailable should be missing, got %d", got["MemAvailable"])
+				}
+			},
+		},
+		{
+			name: "edge cases and malformed lines",
+			input: "NoColonLine\n" +
+				"MemTotal: not-a-number kB\n" +
+				"MemAvailable: 42\n" +
+				"WeirdKey : 7 kB\n" +
+				"SwapTotal:      2048   kB   \n",
+			assert: func(t *testing.T, got map[string]uint64) {
+				t.Helper()
+				if _, ok := got["MemTotal"]; ok {
+					t.Fatalf("MemTotal should be ignored for invalid number")
+				}
+				if got["MemAvailable"] != 42 {
+					t.Fatalf("MemAvailable = %d, want 42", got["MemAvailable"])
+				}
+				if got["WeirdKey"] != 7 {
+					t.Fatalf("WeirdKey = %d, want 7", got["WeirdKey"])
+				}
+				if got["SwapTotal"] != 2048 {
+					t.Fatalf("SwapTotal = %d, want 2048", got["SwapTotal"])
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseMemInfo(tc.input)
+			tc.assert(t, got)
+		})
+	}
+}
+
+func TestCollectSystemDiskWarning(t *testing.T) {
+	data, err := CollectSystem([]config.Disk{
+		{Path: "/", Label: "/"},
+		{Path: "/nonexistent/mount/path", Label: "bad"},
+	})
+	if err != nil {
+		t.Fatalf("CollectSystem() unexpected error: %v", err)
+	}
+	if len(data.Disks) == 0 {
+		t.Fatal("expected at least 1 disk, got 0")
+	}
+	if len(data.Warnings) == 0 {
+		t.Fatal("expected warning for inaccessible disk, got none")
+	}
+	found := false
+	for _, w := range data.Warnings {
+		if strings.Contains(w, "/nonexistent/mount/path") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning containing '/nonexistent/mount/path', got: %v", data.Warnings)
+	}
+}
+
+func TestDiskInfoUsesBavail(t *testing.T) {
+	info, err := diskInfo(config.Disk{Path: "/"})
+	if err != nil {
+		t.Fatalf("diskInfo(/) error = %v", err)
+	}
+	if info.Used > info.Total {
+		t.Fatalf("diskInfo(/) used = %d, total = %d", info.Used, info.Total)
+	}
+
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err != nil {
+		t.Fatalf("statfs(/) error = %v", err)
+	}
+
+	free := info.Total - info.Used
+	expectedFree := stat.Bavail * uint64(stat.Bsize)
+
+	// Use Bavail so free space reflects what non-root users (and df) can use.
+	// Bfree includes filesystem-reserved blocks that regular users cannot claim.
+	if free != expectedFree {
+		t.Fatalf("diskInfo(/) free = %d, want %d (Bavail-based)", free, expectedFree)
+	}
+}
