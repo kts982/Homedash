@@ -38,7 +38,7 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		if m.collapseSeq > m.lastSavedSeq {
-			state.Save(m.collapsedStacks)
+			_ = state.Save(m.collapsedStacks)
 		}
 		return m, tea.Quit
 	case "q":
@@ -54,7 +54,7 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.collapseSeq > m.lastSavedSeq {
-			state.Save(m.collapsedStacks)
+			_ = state.Save(m.collapsedStacks)
 		}
 		return m, tea.Quit
 	}

@@ -40,7 +40,9 @@ func TestParsePositiveDuration(t *testing.T) {
 func TestLoadUnknownFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "homedash")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -82,7 +84,9 @@ func TestLoadUnknownFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath := filepath.Join(configDir, "config.yaml")
-			os.WriteFile(configPath, []byte(tt.yaml), 0644)
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
 			t.Setenv("XDG_CONFIG_HOME", tmpDir)
 
 			_, err := Load()
@@ -96,7 +100,9 @@ func TestLoadUnknownFields(t *testing.T) {
 func TestLoadMinimumEnforcement(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "homedash")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -128,7 +134,9 @@ func TestLoadMinimumEnforcement(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath := filepath.Join(configDir, "config.yaml")
-			os.WriteFile(configPath, []byte(tt.yaml), 0644)
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
 
 			// Override XDG_CONFIG_HOME to use our temp dir
 			t.Setenv("XDG_CONFIG_HOME", tmpDir)
@@ -144,7 +152,9 @@ func TestLoadMinimumEnforcement(t *testing.T) {
 func TestLoadTheme(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "homedash")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name      string
@@ -175,7 +185,9 @@ func TestLoadTheme(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath := filepath.Join(configDir, "config.yaml")
-			os.WriteFile(configPath, []byte(tt.yaml), 0644)
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
 			t.Setenv("XDG_CONFIG_HOME", tmpDir)
 
 			cfg, err := Load()
