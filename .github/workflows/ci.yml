@@ -3,30 +3,38 @@ name: CI
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
   pull_request:
     branches: [master]
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
 
       - name: Build
         run: go build ./...
 
       - name: Test
         run: go test ./...
-
-      - name: Test (race detector)
-        run: go test -race ./...
 
   lint:
     runs-on: ubuntu-latest
@@ -35,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
 
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
@@ -43,38 +51,32 @@ jobs:
       - name: golangci-lint
         run: golangci-lint run
 
-  vulncheck:
+  race:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
+
+      - name: Test (race detector)
+        run: go test -race ./...
+
+  vulncheck:
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
         run: govulncheck ./...
-
-  build-matrix:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        goos: [linux]
-        goarch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -o homedash-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/homedash
