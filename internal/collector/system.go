@@ -56,24 +56,15 @@ func CollectSystem(disks []config.Disk) (SystemData, error) {
 		lines := strings.Split(string(raw), "\n")
 		for _, line := range lines {
 			if strings.HasPrefix(line, "cpu ") {
-				fields := strings.Fields(line)
-				if len(fields) >= 8 {
-					var values [8]uint64
-					for i := 1; i <= 7; i++ {
-						values[i-1], _ = strconv.ParseUint(fields[i], 10, 64)
-					}
-					// user, nice, system, idle, iowait, irq, softirq
-					idle := values[3] + values[4]
-					total := values[0] + values[1] + values[2] + values[3] + values[4] + values[5] + values[6]
-
+				if sample, ok := parseCPUSample(line); ok {
 					if prevCPU.total > 0 {
-						idleDelta := float64(idle - prevCPU.idle)
-						totalDelta := float64(total - prevCPU.total)
+						idleDelta := float64(sample.idle - prevCPU.idle)
+						totalDelta := float64(sample.total - prevCPU.total)
 						if totalDelta > 0 {
 							data.CPUPercent = (1.0 - idleDelta/totalDelta) * 100
 						}
 					}
-					prevCPU = cpuSample{idle: idle, total: total}
+					prevCPU = sample
 				}
 				break
 			}
@@ -90,12 +81,12 @@ func CollectSystem(disks []config.Disk) (SystemData, error) {
 	// Memory
 	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
 		memInfo := parseMemInfo(string(raw))
-		total := memInfo["MemTotal"]
-		available := memInfo["MemAvailable"]
-		data.MemTotal = total * 1024 // kB to bytes
-		data.MemUsed = (total - available) * 1024
-		if total > 0 {
-			data.MemPercent = float64(total-available) / float64(total) * 100
+		if total, used, ok := memoryUsageKB(memInfo); ok {
+			data.MemTotal = total * 1024 // kB to bytes
+			data.MemUsed = used * 1024
+			if total > 0 {
+				data.MemPercent = float64(used) / float64(total) * 100
+			}
 		}
 	}
 
@@ -144,6 +135,64 @@ func CollectSystem(disks []config.Disk) (SystemData, error) {
 	}
 
 	return data, nil
+}
+
+func parseCPUSample(line string) (cpuSample, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return cpuSample{}, false
+	}
+
+	values := make([]uint64, 0, len(fields)-1)
+	for _, field := range fields[1:] {
+		v, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return cpuSample{}, false
+		}
+		values = append(values, v)
+	}
+	if len(values) < 4 {
+		return cpuSample{}, false
+	}
+
+	idle := values[3]
+	if len(values) > 4 {
+		idle += values[4] // include iowait
+	}
+
+	limit := len(values)
+	if limit > 8 {
+		limit = 8 // user, nice, system, idle, iowait, irq, softirq, steal
+	}
+
+	var total uint64
+	for _, v := range values[:limit] {
+		total += v
+	}
+
+	return cpuSample{idle: idle, total: total}, true
+}
+
+func memoryUsageKB(memInfo map[string]uint64) (total, used uint64, ok bool) {
+	total = memInfo["MemTotal"]
+	if total == 0 {
+		return 0, 0, false
+	}
+
+	available, ok := memInfo["MemAvailable"]
+	if !ok {
+		available = memInfo["MemFree"] + memInfo["Buffers"] + memInfo["Cached"] + memInfo["SReclaimable"]
+		if shmem := memInfo["Shmem"]; shmem < available {
+			available -= shmem
+		} else if shmem > 0 {
+			available = 0
+		}
+	}
+	if available > total {
+		available = total
+	}
+
+	return total, total - available, true
 }
 
 // parseNetDev parses /proc/net/dev and returns aggregate rx/tx bytes
