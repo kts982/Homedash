@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,46 @@ func TestParseDockerLogs(t *testing.T) {
 			t.Fatalf("parseDockerLogs() = %#v, want nil", got)
 		}
 	})
+}
+
+func TestStreamContainerLogsKeepsFrameAlignmentAfterOversizedFrame(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path != "/v1.47/containers/abc123/logs" {
+			http.NotFound(w, r)
+			return
+		}
+
+		oversized := strings.Repeat("x", maxLogFrameSize+32)
+		payload := append(dockerFrame(0x01, oversized), dockerFrame(0x01, "after oversize\n")...)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	saveDockerState(t)
+	SetDockerHost(server.URL)
+
+	lines := make(chan string, 4)
+	err := StreamContainerLogs(context.Background(), "abc123", 50, lines)
+	close(lines)
+	if err != nil {
+		t.Fatalf("StreamContainerLogs() returned error: %v", err)
+	}
+
+	var got []string
+	for line := range lines {
+		got = append(got, line)
+	}
+
+	if len(got) < 2 {
+		t.Fatalf("StreamContainerLogs() lines = %#v, want oversized frame output plus trailing line", got)
+	}
+	if got[len(got)-1] != "after oversize" {
+		t.Fatalf("last streamed line = %q, want %q", got[len(got)-1], "after oversize")
+	}
 }
 
 func saveDockerState(t *testing.T) {

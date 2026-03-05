@@ -360,6 +360,31 @@ func parseDockerLogs(data []byte) []string {
 	return lines
 }
 
+// readDockerFramePayload keeps frame alignment even when we cap how much of an
+// oversized payload we retain for display.
+func readDockerFramePayload(r io.Reader, frameSize uint32) ([]byte, error) {
+	captureSize := int(frameSize)
+	if captureSize > maxLogFrameSize {
+		captureSize = maxLogFrameSize
+	}
+
+	payload := make([]byte, captureSize)
+	n, err := io.ReadFull(r, payload)
+	payload = payload[:n]
+	if err != nil {
+		return payload, err
+	}
+
+	remaining := int64(frameSize) - int64(captureSize)
+	if remaining > 0 {
+		if _, err := io.CopyN(io.Discard, r, remaining); err != nil {
+			return payload, err
+		}
+	}
+
+	return payload, nil
+}
+
 // StreamContainerLogs streams container logs and sends each parsed line to lineCh.
 // It blocks until the context is cancelled or the stream ends.
 func StreamContainerLogs(ctx context.Context, containerID string, tail int, lineCh chan<- string) error {
@@ -436,11 +461,7 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 
 	// Multiplexed mode: process the first frame
 	frameSize := binary.BigEndian.Uint32(header[4:8])
-	if frameSize > maxLogFrameSize {
-		frameSize = maxLogFrameSize
-	}
-	frameData := make([]byte, frameSize)
-	_, err = io.ReadFull(resp.Body, frameData)
+	frameData, err := readDockerFramePayload(resp.Body, frameSize)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		if ctx.Err() != nil {
 			return nil
@@ -471,11 +492,7 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 		if frameSize == 0 {
 			continue
 		}
-		if frameSize > maxLogFrameSize {
-			frameSize = maxLogFrameSize
-		}
-		frameData := make([]byte, frameSize)
-		_, err = io.ReadFull(resp.Body, frameData)
+		frameData, err := readDockerFramePayload(resp.Body, frameSize)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			if ctx.Err() != nil {
 				return nil
