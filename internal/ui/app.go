@@ -209,7 +209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "ctrl+c":
 				if m.collapseSeq > m.lastSavedSeq {
-					state.Save(m.collapsedStacks)
+					_ = state.Save(m.collapsedStacks)
 				}
 				return m, tea.Quit
 			}
