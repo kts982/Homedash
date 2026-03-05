@@ -325,20 +325,23 @@ func parseDockerLogs(data []byte) []string {
 		return nil
 	}
 
+	var (
+		lines     []string
+		remainder string
+	)
+	emitLine := func(line string) error {
+		lines = append(lines, line)
+		return nil
+	}
+
 	// Detect TTY mode: multiplexed streams start with 0x00, 0x01, or 0x02
 	if data[0] != 0x00 && data[0] != 0x01 && data[0] != 0x02 {
-		// Plain text (TTY mode) — just split lines
-		var lines []string
-		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-			if line != "" {
-				lines = append(lines, line)
-			}
-		}
+		_ = processDockerLogChunk(&remainder, data, emitLine)
+		_ = flushDockerLogRemainder(&remainder, emitLine)
 		return lines
 	}
 
 	// Multiplexed stream: 8-byte header per frame
-	var lines []string
 	pos := 0
 	for pos+8 <= len(data) {
 		frameSize := binary.BigEndian.Uint32(data[pos+4 : pos+8])
@@ -349,21 +352,55 @@ func parseDockerLogs(data []byte) []string {
 			end = len(data)
 		}
 
-		frame := string(data[pos:end])
-		for _, line := range strings.Split(strings.TrimRight(frame, "\n"), "\n") {
-			if line != "" {
-				lines = append(lines, line)
-			}
-		}
+		_ = processDockerLogChunk(&remainder, data[pos:end], emitLine)
 		pos = end
 	}
+	_ = flushDockerLogRemainder(&remainder, emitLine)
 	return lines
 }
 
+func processDockerLogChunk(remainder *string, chunk []byte, emit func(string) error) error {
+	if len(chunk) == 0 {
+		return nil
+	}
+
+	*remainder += string(chunk)
+	for {
+		idx := strings.IndexByte(*remainder, '\n')
+		if idx < 0 {
+			return nil
+		}
+
+		line := (*remainder)[:idx]
+		*remainder = (*remainder)[idx+1:]
+		if line == "" {
+			continue
+		}
+		if err := emit(line); err != nil {
+			return err
+		}
+	}
+}
+
+func flushDockerLogRemainder(remainder *string, emit func(string) error) error {
+	if *remainder == "" {
+		return nil
+	}
+
+	line := *remainder
+	*remainder = ""
+	if line == "" {
+		return nil
+	}
+	return emit(line)
+}
+
 // readDockerFramePayload keeps frame alignment even when we cap how much of an
-// oversized payload we retain for display.
-func readDockerFramePayload(r io.Reader, frameSize uint32) ([]byte, error) {
+// oversized payload we retain for display. The returned bool reports whether we
+// discarded part of the frame payload.
+func readDockerFramePayload(r io.Reader, frameSize uint32) ([]byte, bool, error) {
 	captureSize := int(frameSize)
+	truncated := captureSize > maxLogFrameSize
 	if captureSize > maxLogFrameSize {
 		captureSize = maxLogFrameSize
 	}
@@ -372,17 +409,17 @@ func readDockerFramePayload(r io.Reader, frameSize uint32) ([]byte, error) {
 	n, err := io.ReadFull(r, payload)
 	payload = payload[:n]
 	if err != nil {
-		return payload, err
+		return payload, truncated, err
 	}
 
 	remaining := int64(frameSize) - int64(captureSize)
 	if remaining > 0 {
 		if _, err := io.CopyN(io.Discard, r, remaining); err != nil {
-			return payload, err
+			return payload, truncated, err
 		}
 	}
 
-	return payload, nil
+	return payload, truncated, nil
 }
 
 // StreamContainerLogs streams container logs and sends each parsed line to lineCh.
@@ -419,37 +456,37 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 	}
 
 	isTTY := header[0] != 0x00 && header[0] != 0x01 && header[0] != 0x02
+	remainder := ""
+	emitLine := func(line string) error {
+		select {
+		case lineCh <- line:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
 	if isTTY {
-		// TTY mode: plain text stream
-		remainder := string(header)
+		if err := processDockerLogChunk(&remainder, header, emitLine); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
 		buf := make([]byte, 4096)
 		for {
 			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
-				remainder += string(buf[:n])
-				for {
-					idx := strings.IndexByte(remainder, '\n')
-					if idx < 0 {
-						break
+				if err := processDockerLogChunk(&remainder, buf[:n], emitLine); err != nil {
+					if ctx.Err() != nil {
+						return nil
 					}
-					line := remainder[:idx]
-					remainder = remainder[idx+1:]
-					if line != "" {
-						select {
-						case lineCh <- line:
-						case <-ctx.Done():
-							return nil
-						}
-					}
+					return err
 				}
 			}
 			if readErr != nil {
-				if remainder != "" {
-					select {
-					case lineCh <- remainder:
-					case <-ctx.Done():
-					}
+				if err := flushDockerLogRemainder(&remainder, emitLine); err != nil && ctx.Err() == nil {
+					return err
 				}
 				if readErr == io.EOF || ctx.Err() != nil {
 					return nil
@@ -461,27 +498,38 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 
 	// Multiplexed mode: process the first frame
 	frameSize := binary.BigEndian.Uint32(header[4:8])
-	frameData, err := readDockerFramePayload(resp.Body, frameSize)
+	frameData, truncated, err := readDockerFramePayload(resp.Body, frameSize)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		if ctx.Err() != nil {
 			return nil
 		}
 		return fmt.Errorf("docker stream logs read frame: %w", err)
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(frameData), "\n"), "\n") {
-		if line != "" {
-			select {
-			case lineCh <- line:
-			case <-ctx.Done():
-				return nil
-			}
+	if err := processDockerLogChunk(&remainder, frameData, emitLine); err != nil {
+		if ctx.Err() != nil {
+			return nil
 		}
+		return err
+	}
+	if truncated {
+		if err := flushDockerLogRemainder(&remainder, emitLine); err != nil && ctx.Err() == nil {
+			return err
+		}
+	}
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if err := flushDockerLogRemainder(&remainder, emitLine); err != nil && ctx.Err() == nil {
+			return err
+		}
+		return nil
 	}
 
 	// Continue reading subsequent frames
 	for {
 		_, err := io.ReadFull(resp.Body, header)
 		if err != nil {
+			if flushErr := flushDockerLogRemainder(&remainder, emitLine); flushErr != nil && ctx.Err() == nil {
+				return flushErr
+			}
 			if err == io.EOF || err == io.ErrUnexpectedEOF || ctx.Err() != nil {
 				return nil
 			}
@@ -492,22 +540,29 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 		if frameSize == 0 {
 			continue
 		}
-		frameData, err := readDockerFramePayload(resp.Body, frameSize)
+		frameData, truncated, err := readDockerFramePayload(resp.Body, frameSize)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			if ctx.Err() != nil {
 				return nil
 			}
 			return err
 		}
-
-		for _, line := range strings.Split(strings.TrimRight(string(frameData), "\n"), "\n") {
-			if line != "" {
-				select {
-				case lineCh <- line:
-				case <-ctx.Done():
-					return nil
-				}
+		if err := processDockerLogChunk(&remainder, frameData, emitLine); err != nil {
+			if ctx.Err() != nil {
+				return nil
 			}
+			return err
+		}
+		if truncated {
+			if err := flushDockerLogRemainder(&remainder, emitLine); err != nil && ctx.Err() == nil {
+				return err
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if err := flushDockerLogRemainder(&remainder, emitLine); err != nil && ctx.Err() == nil {
+				return err
+			}
+			return nil
 		}
 	}
 }

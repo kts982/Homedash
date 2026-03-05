@@ -73,6 +73,16 @@ func TestParseDockerLogs(t *testing.T) {
 		}
 	})
 
+	t.Run("multiplexed mode joins lines across frames", func(t *testing.T) {
+		input := append(dockerFrame(0x01, "stdout "), dockerFrame(0x01, "one\nstderr")...)
+		input = append(input, dockerFrame(0x02, " one\n")...)
+		want := []string{"stdout one", "stderr one"}
+		got := parseDockerLogs(input)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parseDockerLogs() = %#v, want %#v", got, want)
+		}
+	})
+
 	t.Run("truncated frame payload", func(t *testing.T) {
 		frame := dockerFrame(0x01, "abcdef\n")
 		input := frame[:8+3] // header says 7 bytes, only 3 remain
@@ -129,6 +139,44 @@ func TestStreamContainerLogsKeepsFrameAlignmentAfterOversizedFrame(t *testing.T)
 	}
 	if got[len(got)-1] != "after oversize" {
 		t.Fatalf("last streamed line = %q, want %q", got[len(got)-1], "after oversize")
+	}
+}
+
+func TestStreamContainerLogsJoinsLinesAcrossFrames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path != "/v1.47/containers/abc123/logs" {
+			http.NotFound(w, r)
+			return
+		}
+
+		payload := append(dockerFrame(0x01, "split"), dockerFrame(0x01, " line\nsecond")...)
+		payload = append(payload, dockerFrame(0x02, " line\n")...)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	saveDockerState(t)
+	SetDockerHost(server.URL)
+
+	lines := make(chan string, 4)
+	err := StreamContainerLogs(context.Background(), "abc123", 50, lines)
+	close(lines)
+	if err != nil {
+		t.Fatalf("StreamContainerLogs() returned error: %v", err)
+	}
+
+	var got []string
+	for line := range lines {
+		got = append(got, line)
+	}
+
+	want := []string{"split line", "second line"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("StreamContainerLogs() lines = %#v, want %#v", got, want)
 	}
 }
 
