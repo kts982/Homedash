@@ -8,7 +8,12 @@ A terminal dashboard for homelab servers. Built with [Go](https://go.dev) and th
 
 Zero external dependencies for data collection — reads directly from `/proc`, the Docker unix socket, and [wttr.in](https://wttr.in).
 
-<!-- TODO: Add screenshot/GIF here -->
+<img width="800" alt="HomeDash dashboard" src="https://github.com/user-attachments/assets/a0d1e394-2b98-4159-8850-6e8c2364bafa" />
+
+<p>
+<img width="395" alt="Container logs" src="https://github.com/user-attachments/assets/96204e08-b48d-443c-8b75-9432ff2c00c2" />
+<img width="395" alt="Container actions" src="https://github.com/user-attachments/assets/a0e36abc-a5a9-4cc1-8fe1-78153c642e77" />
+</p>
 
 ## Features
 
