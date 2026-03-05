@@ -229,6 +229,65 @@ func TestEnsureVisibleEmptyList(t *testing.T) {
 	}
 }
 
+func TestRecalcLayoutCountsRunningDetailNetRow(t *testing.T) {
+	m := newTestModel()
+	m.width = 120
+	m.height = 30
+	m.detailContainer = &collector.Container{State: "running"}
+
+	m.recalcLayout()
+
+	if m.detailLogRows != 18 {
+		t.Fatalf("detailLogRows = %d, want 18 for a running container detail view", m.detailLogRows)
+	}
+}
+
+func TestEnterDetailViewRecalculatesDetailLayout(t *testing.T) {
+	m := newTestModel()
+	m.width = 120
+	m.height = 30
+
+	m.recalcLayout()
+	if m.detailLogRows != 19 {
+		t.Fatalf("baseline detailLogRows = %d, want 19 before selecting a container", m.detailLogRows)
+	}
+
+	m.enterDetailView(&collector.Container{ID: "abc123", State: "running"})
+
+	if m.detailLogRows != 18 {
+		t.Fatalf("detailLogRows = %d, want 18 after entering a running container detail view", m.detailLogRows)
+	}
+}
+
+func TestDockerDataMsgRecalculatesDetailLayoutWhenContainerStateChanges(t *testing.T) {
+	m := newTestModel()
+	m.width = 120
+	m.height = 30
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailContainer = &collector.Container{ID: "abc123", State: "running"}
+	m.recalcLayout()
+
+	updatedModel, _ := m.Update(DockerDataMsg{
+		Data: collector.DockerData{
+			Containers: []collector.Container{
+				{ID: "abc123", Name: "svc", State: "exited"},
+			},
+		},
+	})
+	updated := updatedModel.(Model)
+
+	if updated.detailContainer == nil {
+		t.Fatal("detailContainer = nil, want refreshed container")
+	}
+	if updated.detailContainer.State != "exited" {
+		t.Fatalf("detailContainer.State = %q, want %q", updated.detailContainer.State, "exited")
+	}
+	if updated.detailLogRows != 19 {
+		t.Fatalf("detailLogRows = %d, want 19 after the container stops", updated.detailLogRows)
+	}
+}
+
 func TestQuickMenuItemsRunning(t *testing.T) {
 	items := quickMenuItems("running")
 

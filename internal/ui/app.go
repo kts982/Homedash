@@ -52,14 +52,14 @@ type Model struct {
 	disks       []config.Disk
 	dockerHost  string
 
-	cpuHistory    *components.RingBuffer
-	focusedPanel  Panel
-	scrollOffset  int
-	containerRows int
-	detailLogRows int
+	cpuHistory      *components.RingBuffer
+	focusedPanel    Panel
+	scrollOffset    int
+	containerRows   int
+	detailLogRows   int
 	containerStartY int // Y offset where container data rows begin
 	detailLogStartY int
-	selectedIndex int
+	selectedIndex   int
 
 	systemErr  error
 	dockerErr  error
@@ -105,11 +105,11 @@ type Model struct {
 	lastSavedSeq uint64
 
 	// Notifications
-	notifications      notificationQueue
-	dockerBaselineSet  bool
-	diskWarned         map[string]bool
-	weatherWasOK       bool
-	shownWarnings      map[string]bool // collector warnings already surfaced
+	notifications     notificationQueue
+	dockerBaselineSet bool
+	diskWarned        map[string]bool
+	weatherWasOK      bool
+	shownWarnings     map[string]bool // collector warnings already surfaced
 
 	// Double-click tracking
 	lastClickTime  time.Time
@@ -340,6 +340,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			m.recalcLayout()
 		}
 		cmds := append(notifCmds, dockerTickCmd(m.dockerRefreshInterval))
 		return m, tea.Batch(cmds...)
@@ -660,6 +661,9 @@ func (m *Model) recalcLayout() {
 
 	// Detail view: dynamic info panel height
 	infoLines := 4 // base: Image, Stack/Health, Ports, ID
+	if m.detailContainer != nil && m.detailContainer.State == "running" {
+		infoLines++ // Net row
+	}
 	if m.detailMeta != nil {
 		if len(m.detailMeta.Mounts) > 0 {
 			infoLines++

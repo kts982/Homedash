@@ -28,6 +28,7 @@ func (m *Model) enterDetailView(c *collector.Container) tea.Cmd {
 	m.detailMetaErr = nil
 	m.confirmAction = ""
 	m.actionResult = ""
+	m.recalcLayout()
 	return tea.Batch(
 		collectLogsCmd(c.ID, 50),
 		collectDetailCmd(c.ID),
