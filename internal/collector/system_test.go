@@ -236,6 +236,110 @@ func TestMemoryUsageKBClampsAvailableToTotal(t *testing.T) {
 	}
 }
 
+func TestParseCPUSample(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want cpuSample
+		ok   bool
+	}{
+		{
+			name: "includes steal and ignores guest counters",
+			line: "cpu 1 2 3 4 5 6 7 8 9 10",
+			want: cpuSample{idle: 9, total: 36},
+			ok:   true,
+		},
+		{
+			name: "requires aggregate cpu line",
+			line: "cpu0 1 2 3 4",
+			ok:   false,
+		},
+		{
+			name: "rejects malformed counters",
+			line: "cpu 1 two 3 4",
+			ok:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := parseCPUSample(tc.line)
+			if ok != tc.ok {
+				t.Fatalf("parseCPUSample(%q) ok = %v, want %v", tc.line, ok, tc.ok)
+			}
+			if ok && got != tc.want {
+				t.Fatalf("parseCPUSample(%q) = %#v, want %#v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMemoryUsageKB(t *testing.T) {
+	tests := []struct {
+		name      string
+		memInfo   map[string]uint64
+		wantTotal uint64
+		wantUsed  uint64
+		ok        bool
+	}{
+		{
+			name: "uses MemAvailable when present",
+			memInfo: map[string]uint64{
+				"MemTotal":     1000,
+				"MemAvailable": 400,
+			},
+			wantTotal: 1000,
+			wantUsed:  600,
+			ok:        true,
+		},
+		{
+			name: "falls back to legacy availability fields",
+			memInfo: map[string]uint64{
+				"MemTotal":     1000,
+				"MemFree":      200,
+				"Buffers":      50,
+				"Cached":       150,
+				"SReclaimable": 25,
+				"Shmem":        10,
+			},
+			wantTotal: 1000,
+			wantUsed:  585,
+			ok:        true,
+		},
+		{
+			name: "clamps fallback availability to total",
+			memInfo: map[string]uint64{
+				"MemTotal": 1000,
+				"MemFree":  1500,
+			},
+			wantTotal: 1000,
+			wantUsed:  0,
+			ok:        true,
+		},
+		{
+			name: "returns false without availability data",
+			memInfo: map[string]uint64{
+				"MemTotal": 1000,
+			},
+			wantTotal: 1000,
+			wantUsed:  0,
+			ok:        false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			total, used, ok := memoryUsageKB(tc.memInfo)
+			if total != tc.wantTotal || used != tc.wantUsed || ok != tc.ok {
+				t.Fatalf("memoryUsageKB(%v) = (%d, %d, %v), want (%d, %d, %v)",
+					tc.memInfo, total, used, ok, tc.wantTotal, tc.wantUsed, tc.ok)
+			}
+		})
+	}
+}
+
 func TestCollectSystemDiskWarning(t *testing.T) {
 	data, err := CollectSystem([]config.Disk{
 		{Path: "/", Label: "/"},

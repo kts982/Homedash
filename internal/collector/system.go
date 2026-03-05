@@ -181,7 +181,16 @@ func memoryUsageKB(memInfo map[string]uint64) (total, used uint64, ok bool) {
 
 	available, ok := memInfo["MemAvailable"]
 	if !ok {
-		available = memInfo["MemFree"] + memInfo["Buffers"] + memInfo["Cached"] + memInfo["SReclaimable"]
+		for _, key := range []string{"MemFree", "Buffers", "Cached", "SReclaimable"} {
+			v, present := memInfo[key]
+			if present {
+				available += v
+				ok = true
+			}
+		}
+		if !ok {
+			return total, 0, false
+		}
 		if shmem := memInfo["Shmem"]; shmem < available {
 			available -= shmem
 		} else if shmem > 0 {
