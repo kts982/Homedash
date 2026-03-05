@@ -187,6 +187,55 @@ func TestParseMemInfo(t *testing.T) {
 	}
 }
 
+func TestParseCPUSampleIncludesStealTime(t *testing.T) {
+	sample, ok := parseCPUSample("cpu  10 2 3 40 5 6 7 8 9 10")
+	if !ok {
+		t.Fatal("parseCPUSample() = false, want true")
+	}
+	if sample.idle != 45 {
+		t.Fatalf("sample.idle = %d, want 45", sample.idle)
+	}
+	if sample.total != 81 {
+		t.Fatalf("sample.total = %d, want 81", sample.total)
+	}
+}
+
+func TestMemoryUsageKBFallsBackWithoutMemAvailable(t *testing.T) {
+	total, used, ok := memoryUsageKB(map[string]uint64{
+		"MemTotal":     1000,
+		"MemFree":      100,
+		"Buffers":      50,
+		"Cached":       200,
+		"SReclaimable": 30,
+		"Shmem":        10,
+	})
+	if !ok {
+		t.Fatal("memoryUsageKB() = false, want true")
+	}
+	if total != 1000 {
+		t.Fatalf("total = %d, want 1000", total)
+	}
+	if used != 630 {
+		t.Fatalf("used = %d, want 630", used)
+	}
+}
+
+func TestMemoryUsageKBClampsAvailableToTotal(t *testing.T) {
+	total, used, ok := memoryUsageKB(map[string]uint64{
+		"MemTotal":     1000,
+		"MemAvailable": 2000,
+	})
+	if !ok {
+		t.Fatal("memoryUsageKB() = false, want true")
+	}
+	if total != 1000 {
+		t.Fatalf("total = %d, want 1000", total)
+	}
+	if used != 0 {
+		t.Fatalf("used = %d, want 0", used)
+	}
+}
+
 func TestCollectSystemDiskWarning(t *testing.T) {
 	data, err := CollectSystem([]config.Disk{
 		{Path: "/", Label: "/"},
