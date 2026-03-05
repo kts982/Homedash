@@ -1,8 +1,12 @@
 # HomeDash
 
-A terminal dashboard for homelab servers. Built with Go and the [Charm](https://charm.sh) stack (Bubble Tea + Lipgloss).
+[![CI](https://github.com/kts982/Homedash/actions/workflows/ci.yml/badge.svg)](https://github.com/kts982/Homedash/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Zero external dependencies for data collection — reads directly from `/proc`, the Docker unix socket, and wttr.in.
+A terminal dashboard for homelab servers. Built with [Go](https://go.dev) and the [Charm](https://charm.sh) stack.
+
+Zero external dependencies for data collection — reads directly from `/proc`, the Docker unix socket, and [wttr.in](https://wttr.in).
 
 <!-- TODO: Add screenshot/GIF here -->
 
@@ -14,7 +18,7 @@ Zero external dependencies for data collection — reads directly from `/proc`, 
 - **Container search** — filter containers by name with `/`
 - **Quick-action menu** — `space` to open, manage containers without leaving the dashboard
 - **Notifications** — non-intrusive bar for Docker state changes, disk warnings, weather errors
-- **Weather** — current conditions via wttr.in
+- **Weather** — current conditions via [wttr.in](https://wttr.in)
 - **Mouse support** — click to select, scroll wheel navigation, double-click to open detail view
 - **Themes** — Tokyo Night (default), Catppuccin Mocha, Dracula
 - **Responsive layout** — adapts from ~40 to 200+ column terminals
@@ -24,11 +28,11 @@ Zero external dependencies for data collection — reads directly from `/proc`, 
 
 ### From source
 
-Requires Go 1.25+ and Linux.
+Requires [Go 1.25+](https://go.dev/dl/) and Linux.
 
 ```bash
-git clone https://github.com/kts982/homedash.git
-cd homedash
+git clone https://github.com/kts982/Homedash.git
+cd Homedash
 make build
 ./homedash
 ```
@@ -37,7 +41,7 @@ make build
 
 - **Linux** (reads from `/proc`)
 - **Docker socket** accessible at `/var/run/docker.sock` (no sudo needed if your user is in the `docker` group)
-- **Optional**: Internet access for weather via wttr.in
+- **Optional**: Internet access for weather via [wttr.in](https://wttr.in)
 
 ## Configuration
 
@@ -119,7 +123,7 @@ system:
 wttr.in JSON API               ──5min──>  Weather panel
 ```
 
-All data collection is tick-driven through Bubble Tea commands — no background goroutines or channels. Docker container stats are fetched in parallel with a 5-worker pool.
+All data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands — no background goroutines or channels. Docker container stats are fetched in parallel with a 5-worker pool.
 
 Containers are grouped by the `com.docker.compose.project` label, so any compose-based setup works automatically. Standalone containers appear ungrouped.
 
@@ -135,6 +139,14 @@ internal/ui/            Bubble Tea UI layer
   panels/               Screen sections (system, containers, detail, weather, help)
   styles/               Theme palettes
 ```
+
+## Built With
+
+- [Go](https://go.dev) — language
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
+- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — terminal styling
+- [bubbletea-overlay](https://github.com/rmhubbert/bubbletea-overlay) — popup compositing
 
 ## Troubleshooting
 
