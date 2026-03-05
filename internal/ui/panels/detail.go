@@ -90,6 +90,10 @@ func RenderDetail(
 	}
 
 	portsStr := collector.FormatPorts(c.Ports)
+	containerID := c.ID
+	if len(containerID) > 12 {
+		containerID = containerID[:12]
+	}
 
 	infoLines := []string{
 		labelStyle.Render("Image") + " " + valueStyle.Render(
@@ -97,7 +101,7 @@ func RenderDetail(
 		stackPart + strings.Repeat(" ", stackHealthGap) + healthLabel + " " + healthStyled,
 		labelStyle.Render("Ports") + " " + valueStyle.Render(
 			lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth-9).Render(portsStr)),
-		labelStyle.Render("ID") + " " + valueStyle.Render(c.ID[:12]),
+		labelStyle.Render("ID") + " " + valueStyle.Render(containerID),
 	}
 
 	// Network stats (for running containers with data).
