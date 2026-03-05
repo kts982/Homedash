@@ -1,15 +1,21 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/kostas/homedash/internal/collector"
+	"github.com/kostas/homedash/internal/ui/components"
+	"github.com/kostas/homedash/internal/ui/panels"
 )
 
 func newTestModel() Model {
 	m := Model{
 		collapsedStacks: make(map[string]bool),
 		containerRows:   10,
+		cpuHistory:      components.NewRingBuffer(60),
 		diskWarned:      make(map[string]bool),
 		shownWarnings:   make(map[string]bool),
 	}
@@ -285,6 +291,84 @@ func TestDockerDataMsgRecalculatesDetailLayoutWhenContainerStateChanges(t *testi
 	}
 	if updated.detailLogRows != 19 {
 		t.Fatalf("detailLogRows = %d, want 19 after the container stops", updated.detailLogRows)
+	}
+}
+
+func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
+	m := newTestModel()
+	m.width = 60
+	m.height = 40
+	m.refreshing = true
+	m.searchInput.SetValue("postgres")
+
+	m.recalcLayout()
+
+	header := panels.RenderHeader(m.systemData, m.width)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
+	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
+	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+	previewBar := panels.RenderPreview(nil, m.confirmAction, m.dashboardActionContainerName, m.actionResult, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
+
+	countLines := func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(s, "\n") + 1
+	}
+
+	expectedRows := m.height - countLines(header) - countLines(topRow) - countLines(bottomSection) - 5
+	if expectedRows < 0 {
+		expectedRows = 0
+	}
+
+	if m.containerRows != expectedRows {
+		t.Fatalf("containerRows = %d, want %d to match rendered narrow layout", m.containerRows, expectedRows)
+	}
+}
+
+func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
+	m := newTestModel()
+	m.width = 60
+	m.height = 40
+	m.focusedPanel = PanelContainers
+	m.refreshing = true
+	m.searchInput.SetValue("postgres")
+	for i := 0; i < 20; i++ {
+		m.displayItems = append(m.displayItems, DisplayItem{
+			Kind:      DisplayContainer,
+			Container: &collector.Container{ID: "id", Name: "svc", State: "running"},
+		})
+	}
+	m.selectedIndex = 1
+	m.recalcLayout()
+
+	header := panels.RenderHeader(m.systemData, m.width)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
+	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
+	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+	previewBar := panels.RenderPreview(nil, m.confirmAction, m.dashboardActionContainerName, m.actionResult, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
+	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(topRow, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
+	if expectedRows < 0 {
+		expectedRows = 0
+	}
+	if expectedRows == 0 {
+		t.Fatal("expectedRows = 0, want a rendered container area for this regression test")
+	}
+
+	clickY := m.containerStartY + expectedRows
+	updatedModel, _ := handleMouse(tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		Y:      clickY,
+	}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.selectedIndex != 1 {
+		t.Fatalf("selectedIndex = %d, want 1 when clicking below the rendered container rows", updated.selectedIndex)
 	}
 }
 

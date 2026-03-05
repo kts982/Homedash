@@ -42,6 +42,14 @@ type DisplayItem struct {
 	Collapsed      bool
 }
 
+type dashboardLayoutMetrics struct {
+	header          string
+	topRow          string
+	bottomSection   string
+	containerRows   int
+	containerStartY int
+}
+
 type Model struct {
 	width  int
 	height int
@@ -631,33 +639,9 @@ func (m *Model) pushNotify(message string, level notificationLevel) tea.Cmd {
 }
 
 func (m *Model) recalcLayout() {
-	topHeight := 11
-	if m.isNarrow() {
-		topHeight = 22 // two stacked panels
-	}
-	chromeHeight := 7 // header(1) + container chrome(4) + preview(1) + help(1)
-
-	// Add space for search prompt if active or filter is set
-	if m.filtering || m.searchInput.Value() != "" {
-		chromeHeight++
-	}
-	if m.notifications.len() > 0 {
-		chromeHeight++
-	}
-
-	m.containerRows = m.height - topHeight - chromeHeight
-	if m.containerRows < 0 {
-		m.containerRows = 0
-	}
-
-	// Compute Y offset for mouse hit testing on container rows.
-	// Layout: header(1) + topHeight + container panel border(1) + title(1) + header row(1)
-	m.containerStartY = 1 + topHeight + 3
-	if m.filtering || m.searchInput.Value() != "" {
-		m.containerStartY++ // filter input line
-	}
-	// Note: notification bar is below the container panel (between preview
-	// and help), so it does NOT affect containerStartY.
+	layout := m.measureDashboardLayout()
+	m.containerRows = layout.containerRows
+	m.containerStartY = layout.containerStartY
 
 	// Detail view: dynamic info panel height
 	infoLines := 4 // base: Image, Stack/Health, Ports, ID
@@ -699,6 +683,9 @@ func (m *Model) recalcLayout() {
 }
 
 func (m *Model) ensureVisible() {
+	if m.width > 0 && m.height > 0 {
+		m.containerRows = m.measureDashboardLayout().containerRows
+	}
 	if m.selectedIndex < m.scrollOffset {
 		m.scrollOffset = m.selectedIndex
 	}
@@ -822,74 +809,7 @@ func (m Model) renderDetail() string {
 }
 
 func (m Model) renderDashboard() string {
-	// Header
-	header := panels.RenderHeader(m.systemData, m.width)
-
-	// Top section: side-by-side or stacked depending on width
-	topHeight := 11
-	var topRow string
-
-	if m.isNarrow() {
-		// Stack vertically at full width
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
-			m.width, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			m.width, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
-	} else {
-		// Side-by-side: 40/60 split
-		leftWidth := m.width * 40 / 100
-		if leftWidth < 35 {
-			leftWidth = 35
-		}
-		rightWidth := m.width - leftWidth
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
-			leftWidth, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			rightWidth, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, weatherPanel)
-	}
-
-	// Preview bar — show selected container info
-	var selectedContainer *collector.Container
-	if m.selectedIndex >= 0 && m.selectedIndex < len(m.displayItems) {
-		selectedContainer = m.displayItems[m.selectedIndex].Container
-	}
-	previewBar := panels.RenderPreview(selectedContainer, m.confirmAction, m.dashboardActionContainerName, m.actionResult, m.width)
-
-	// Help bar
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
-	notifBar := renderNotificationBar(&m.notifications, m.width)
-
-	// Bottom bars pinned — always visible
-	var bottomBars []string
-	bottomBars = append(bottomBars, previewBar)
-	if notifBar != "" {
-		bottomBars = append(bottomBars, notifBar)
-	}
-	bottomBars = append(bottomBars, helpBar)
-	bottomSection := lipgloss.JoinVertical(lipgloss.Left, bottomBars...)
-
-	// Measure actual rendered heights to compute container panel size dynamically
-	headerLines := strings.Count(header, "\n") + 1
-	topLines := strings.Count(topRow, "\n") + 1
-	bottomLines := strings.Count(bottomSection, "\n") + 1
-	containerChrome := 4 // border(2) + title(1) + column header(1)
-	if m.filtering || m.searchInput.Value() != "" {
-		containerChrome++
-	}
-	visibleRows := m.height - headerLines - topLines - bottomLines - containerChrome
-	if visibleRows < 0 {
-		visibleRows = 0
-	}
+	layout := m.measureDashboardLayout()
 
 	// Containers — sized to exactly fill remaining space
 	panelItems := make([]panels.ContainerDisplayItem, len(m.displayItems))
@@ -907,7 +827,7 @@ func (m Model) renderDashboard() string {
 	containersPanel := panels.RenderContainers(
 		panelItems,
 		m.dockerData.Running, m.dockerData.Total,
-		m.scrollOffset, m.selectedIndex, visibleRows, m.width,
+		m.scrollOffset, m.selectedIndex, layout.containerRows, m.width,
 		m.focusedPanel == PanelContainers,
 		m.searchInput, m.filtering)
 
@@ -917,7 +837,7 @@ func (m Model) renderDashboard() string {
 	}
 
 	view := lipgloss.JoinVertical(lipgloss.Left,
-		header, topRow, containersPanel, bottomSection)
+		layout.header, layout.topRow, containersPanel, layout.bottomSection)
 
 	// Safety truncation — should not be needed with dynamic sizing
 	lines := strings.Split(view, "\n")
@@ -931,4 +851,98 @@ func (m Model) renderDashboard() string {
 		Width(m.width).
 		Height(m.height).
 		Render(view)
+}
+
+func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
+	if m.width <= 0 || m.height <= 0 {
+		return dashboardLayoutMetrics{}
+	}
+
+	header := panels.RenderHeader(m.systemData, m.width)
+
+	topHeight := 11
+	var topRow string
+	if m.isNarrow() {
+		systemPanel := panels.RenderSystem(
+			m.systemData, m.cpuHistory,
+			m.width, topHeight,
+			m.focusedPanel == PanelSystem)
+		weatherPanel := panels.RenderWeather(
+			m.weatherData, m.weatherErr, m.weatherRetries,
+			m.width, topHeight,
+			m.focusedPanel == PanelWeather)
+		topRow = lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+	} else {
+		leftWidth := m.width * 40 / 100
+		if leftWidth < 35 {
+			leftWidth = 35
+		}
+		rightWidth := m.width - leftWidth
+		systemPanel := panels.RenderSystem(
+			m.systemData, m.cpuHistory,
+			leftWidth, topHeight,
+			m.focusedPanel == PanelSystem)
+		weatherPanel := panels.RenderWeather(
+			m.weatherData, m.weatherErr, m.weatherRetries,
+			rightWidth, topHeight,
+			m.focusedPanel == PanelWeather)
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, weatherPanel)
+	}
+
+	previewBar := panels.RenderPreview(
+		m.selectedContainer(),
+		m.confirmAction,
+		m.dashboardActionContainerName,
+		m.actionResult,
+		m.width,
+	)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	notifBar := renderNotificationBar(&m.notifications, m.width)
+
+	bottomBars := []string{previewBar}
+	if notifBar != "" {
+		bottomBars = append(bottomBars, notifBar)
+	}
+	bottomBars = append(bottomBars, helpBar)
+	bottomSection := lipgloss.JoinVertical(lipgloss.Left, bottomBars...)
+
+	headerLines := renderedLineCount(header)
+	topLines := renderedLineCount(topRow)
+	bottomLines := renderedLineCount(bottomSection)
+	containerChrome := 4 // border(2) + title(1) + column header(1)
+	if m.filtering || m.searchInput.Value() != "" {
+		containerChrome++
+	}
+
+	containerRows := m.height - headerLines - topLines - bottomLines - containerChrome
+	if containerRows < 0 {
+		containerRows = 0
+	}
+
+	containerStartY := headerLines + topLines + 3
+	if m.filtering || m.searchInput.Value() != "" {
+		containerStartY++
+	}
+
+	return dashboardLayoutMetrics{
+		header:          header,
+		topRow:          topRow,
+		bottomSection:   bottomSection,
+		containerRows:   containerRows,
+		containerStartY: containerStartY,
+	}
+}
+
+func (m Model) selectedContainer() *collector.Container {
+	if m.selectedIndex >= 0 && m.selectedIndex < len(m.displayItems) {
+		return m.displayItems[m.selectedIndex].Container
+	}
+	return nil
+}
+
+func renderedLineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
