@@ -37,10 +37,11 @@ jobs:
         with:
           go-version: stable
 
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: latest
+        run: golangci-lint run
 
   vulncheck:
     runs-on: ubuntu-latest
