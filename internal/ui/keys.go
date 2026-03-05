@@ -242,6 +242,10 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 }
 
 func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
+	layout := m.measureDashboardLayout()
+	m.containerRows = layout.containerRows
+	m.containerStartY = layout.containerStartY
+
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if m.focusedPanel == PanelContainers {
