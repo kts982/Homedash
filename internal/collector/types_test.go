@@ -57,3 +57,42 @@ func TestFormatPorts(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatPublishedPorts(t *testing.T) {
+	tests := []struct {
+		name  string
+		ports []PublishedPort
+		want  string
+	}{
+		{
+			name:  "empty ports list",
+			ports: nil,
+			want:  "-",
+		},
+		{
+			name: "wildcard and localhost bindings",
+			ports: []PublishedPort{
+				{HostIP: "0.0.0.0", HostPort: 8080, ContainerPort: 80, Type: "tcp"},
+				{HostIP: "127.0.0.1", HostPort: 5432, ContainerPort: 5432, Type: "tcp"},
+			},
+			want: "*:8080->80/tcp, 127.0.0.1:5432->5432/tcp",
+		},
+		{
+			name: "ipv6 binding is bracketed",
+			ports: []PublishedPort{
+				{HostIP: "fd00::9", HostPort: 8443, ContainerPort: 443, Type: "tcp"},
+			},
+			want: "[fd00::9]:8443->443/tcp",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := FormatPublishedPorts(tc.ports)
+			if got != tc.want {
+				t.Fatalf("FormatPublishedPorts() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

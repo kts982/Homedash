@@ -21,7 +21,7 @@ func capitalize(s string) string {
 const detailLabelWidth = 8
 
 // DetailInfoPanelHeight returns the rendered info panel height for the detail view.
-func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, width int) int {
+func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, hostname string, width int) int {
 	if c == nil {
 		return 7 // 4 baseline rows + border/title chrome
 	}
@@ -29,10 +29,10 @@ func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDeta
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
-	return len(detailInfoLines(c, meta, innerWidth)) + 3
+	return len(detailInfoLines(c, meta, hostname, innerWidth)) + 3
 }
 
-func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, innerWidth int) []string {
+func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, hostname string, innerWidth int) []string {
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
 	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
@@ -79,6 +79,14 @@ func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, in
 			infoLines = append(infoLines,
 				formatDetailLine(labelStyle, valueStyle, "Addr", addrLine, innerWidth))
 		}
+		if publishLine := detailPublishedPortLine(meta.PublishedPorts, innerWidth); publishLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Publish", publishLine, innerWidth))
+		}
+		if urlLine := detailURLLine(meta.PublishedPorts, hostname, innerWidth); urlLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "URLs", urlLine, innerWidth))
+		}
 	}
 
 	containerID := c.ID
@@ -118,12 +126,17 @@ func formatDetailLine(labelStyle, valueStyle lipgloss.Style, label, value string
 	if value == "" {
 		value = "-"
 	}
+	valueWidth := detailValueWidth(innerWidth)
+	return labelStyle.Render(label) + " " +
+		valueStyle.Render(lipgloss.NewStyle().Inline(true).MaxWidth(valueWidth).Render(value))
+}
+
+func detailValueWidth(innerWidth int) int {
 	valueWidth := innerWidth - detailLabelWidth - 1
 	if valueWidth < 1 {
 		valueWidth = 1
 	}
-	return labelStyle.Render(label) + " " +
-		valueStyle.Render(lipgloss.NewStyle().Inline(true).MaxWidth(valueWidth).Render(value))
+	return valueWidth
 }
 
 func formatStackHealthLine(labelStyle, valueStyle lipgloss.Style, stackVal, healthStyled string, innerWidth int) string {
@@ -201,9 +214,185 @@ func formatDetailTimestamp(ts time.Time) string {
 	return ts.UTC().Format("2006-01-02 15:04Z")
 }
 
+func detailPublishedPortLine(published []collector.PublishedPort, innerWidth int) string {
+	value := collector.FormatPublishedPorts(published)
+	if value == "" || value == "-" {
+		return ""
+	}
+	return summarizeDetailItems(strings.Split(value, ", "), ", ", detailValueWidth(innerWidth))
+}
+
+func detailURLLine(published []collector.PublishedPort, hostname string, innerWidth int) string {
+	urls := inferPublishedURLs(published, hostname)
+	if len(urls) == 0 {
+		return ""
+	}
+	return summarizeDetailItems(urls, "  ", detailValueWidth(innerWidth))
+}
+
+func inferPublishedURLs(published []collector.PublishedPort, hostname string) []string {
+	var urls []string
+	seen := make(map[string]struct{})
+	hostname = strings.TrimSpace(hostname)
+
+	for _, binding := range published {
+		scheme := inferPublishedURLScheme(binding)
+		if scheme == "" || binding.HostPort <= 0 {
+			continue
+		}
+		for _, host := range detailURLHosts(binding.HostIP, hostname) {
+			if host == "" {
+				continue
+			}
+			url := scheme + "://" + formatURLHost(host, binding.HostPort, scheme)
+			if _, ok := seen[url]; ok {
+				continue
+			}
+			seen[url] = struct{}{}
+			urls = append(urls, url)
+		}
+	}
+
+	return urls
+}
+
+func inferPublishedURLScheme(binding collector.PublishedPort) string {
+	if binding.Type != "tcp" {
+		return ""
+	}
+	switch {
+	case binding.ContainerPort == 443 || binding.HostPort == 443 || binding.HostPort == 8443:
+		return "https"
+	case isLikelyHTTPPort(binding.ContainerPort) || isLikelyHTTPPort(binding.HostPort):
+		return "http"
+	default:
+		return ""
+	}
+}
+
+func isLikelyHTTPPort(port int) bool {
+	switch port {
+	case 80, 81, 3000, 4000, 5000, 5173, 8000, 8080, 8081, 8088, 8090, 9000:
+		return true
+	default:
+		return false
+	}
+}
+
+func detailURLHosts(hostIP, hostname string) []string {
+	hostIP = strings.TrimSpace(hostIP)
+	switch hostIP {
+	case "", "0.0.0.0", "::":
+		hosts := []string{"localhost"}
+		if hostname != "" && hostname != "localhost" {
+			hosts = append(hosts, hostname)
+		}
+		return hosts
+	case "127.0.0.1", "::1":
+		return []string{"localhost"}
+	default:
+		return []string{hostIP}
+	}
+}
+
+func formatURLHost(host string, port int, scheme string) string {
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
+		return host
+	}
+	return fmt.Sprintf("%s:%d", host, port)
+}
+
+func summarizeDetailItems(items []string, separator string, width int) string {
+	var cleaned []string
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			cleaned = append(cleaned, item)
+		}
+	}
+	if len(cleaned) == 0 || width <= 0 {
+		return ""
+	}
+
+	full := strings.Join(cleaned, separator)
+	if lipgloss.Width(full) <= width {
+		return full
+	}
+
+	selected := make([]string, 0, len(cleaned))
+	current := ""
+	for i, item := range cleaned {
+		candidate := item
+		if current != "" {
+			candidate = current + separator + item
+		}
+		if lipgloss.Width(candidate) <= width {
+			selected = append(selected, item)
+			current = candidate
+			continue
+		}
+		if len(selected) == 0 {
+			return truncateDetailValue(item, width)
+		}
+		return summarizeDetailItemsWithRemainder(selected, len(cleaned)-i, separator, width)
+	}
+
+	return current
+}
+
+func summarizeDetailItemsWithRemainder(selected []string, hidden int, separator string, width int) string {
+	if len(selected) == 0 {
+		return ""
+	}
+	if hidden <= 0 {
+		return strings.Join(selected, separator)
+	}
+	for keep := len(selected); keep >= 1; keep-- {
+		prefix := strings.Join(selected[:keep], separator)
+		suffix := fmt.Sprintf(" +%d more", hidden+len(selected)-keep)
+		if lipgloss.Width(prefix)+lipgloss.Width(suffix) <= width {
+			return prefix + suffix
+		}
+	}
+	suffix := fmt.Sprintf(" +%d more", hidden+len(selected))
+	if lipgloss.Width(suffix) <= width {
+		return suffix
+	}
+	return truncateDetailValue(selected[0], width)
+}
+
+func truncateDetailValue(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+
+	var b strings.Builder
+	for _, r := range value {
+		next := b.String() + string(r)
+		if lipgloss.Width(next)+lipgloss.Width("…") > width {
+			break
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 {
+		return "…"
+	}
+	return b.String() + "…"
+}
+
 func RenderDetail(
 	c *collector.Container,
 	meta *collector.ContainerDetail,
+	hostname string,
 	logs []string, logsErr error,
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
@@ -235,7 +424,7 @@ func RenderDetail(
 
 	infoTitle := lipgloss.NewStyle().Inline(true).MaxWidth(titleAvail).Render(infoTitleLeft)
 
-	infoLines := detailInfoLines(c, meta, innerWidth)
+	infoLines := detailInfoLines(c, meta, hostname, innerWidth)
 	infoPanelHeight := len(infoLines) + 3 // border(2) + title(1)
 	infoContent := strings.Join(infoLines, "\n")
 	infoPanel := components.Panel(infoTitle, infoContent, width, infoPanelHeight, false)
