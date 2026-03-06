@@ -41,6 +41,8 @@ type DisplayItem struct {
 	UnhealthyCount int
 	StartingCount  int
 	StoppedCount   int
+	CPUPercTotal   float64
+	MemUsedTotal   uint64
 	Container      *collector.Container
 	Collapsed      bool
 }
@@ -82,24 +84,26 @@ type Model struct {
 	collapsedStacks map[string]bool
 	displayItems    []DisplayItem
 
-	viewMode                     ViewMode
-	detailContainer              *collector.Container
-	detailContainerID            string
-	detailLogs                   []string
-	detailLogsErr                error
-	detailMeta                   *collector.ContainerDetail
-	detailMetaErr                error
-	detailScrollOffset           int
-	confirmAction                string
-	actionResult                 string
-	dashboardActionContainerID   string
-	dashboardActionContainerName string
+	viewMode                   ViewMode
+	detailContainer            *collector.Container
+	detailContainerID          string
+	detailLogs                 []string
+	detailLogsErr              error
+	detailMeta                 *collector.ContainerDetail
+	detailMetaErr              error
+	detailScrollOffset         int
+	confirmAction              string
+	actionResult               string
+	dashboardActionContainerID string
+	dashboardActionStackName   string
+	dashboardActionTargetName  string
 
 	// Quick-action menu
 	quickMenuOpen        bool
 	quickMenuIndex       int
 	quickMenuContainerID string
 	quickMenuContainer   *collector.Container
+	quickMenuStackName   string
 
 	// Search/Filter
 	searchInput textinput.Model
@@ -330,17 +334,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.dockerErr = msg.Err
 		m.rebuildDisplayItems()
-		// Refresh quick menu container pointer if open
+		// Refresh quick menu target if open
 		if m.quickMenuOpen {
-			m.quickMenuContainer = nil
-			for i := range m.dockerData.Containers {
-				if m.dockerData.Containers[i].ID == m.quickMenuContainerID {
-					m.quickMenuContainer = &m.dockerData.Containers[i]
-					break
+			if m.quickMenuStackName != "" {
+				found := false
+				for _, item := range m.displayItems {
+					if item.Kind == DisplayGroup && item.StackName == m.quickMenuStackName {
+						found = true
+						break
+					}
 				}
-			}
-			if m.quickMenuContainer == nil {
-				m.quickMenuOpen = false
+				if !found {
+					m.quickMenuOpen = false
+					m.quickMenuStackName = ""
+				}
+			} else {
+				m.quickMenuContainer = nil
+				for i := range m.dockerData.Containers {
+					if m.dockerData.Containers[i].ID == m.quickMenuContainerID {
+						m.quickMenuContainer = &m.dockerData.Containers[i]
+						break
+					}
+				}
+				if m.quickMenuContainer == nil {
+					m.quickMenuOpen = false
+				}
 			}
 		}
 		if m.viewMode == ViewDetail && m.detailContainerID != "" {
@@ -389,10 +407,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, collectLogsCmd(m.detailContainerID, 50))
 		}
 		if m.viewMode == ViewDashboard {
-			m.dashboardActionContainerID = ""
-			m.dashboardActionContainerName = ""
+			m.clearDashboardAction()
 		}
 		return m, tea.Batch(cmds...)
+
+	case StackActionMsg:
+		switch {
+		case msg.Attempted == 0:
+			m.actionResult = fmt.Sprintf("Nothing to %s in stack %s", msg.Action, msg.StackName)
+		case msg.Err != nil:
+			m.actionResult = fmt.Sprintf(
+				"Error: %s stack %s (%d/%d failed)",
+				msg.Action,
+				msg.StackName,
+				len(msg.Failed),
+				msg.Attempted,
+			)
+		default:
+			m.actionResult = fmt.Sprintf(
+				"Success: %s stack %s (%d containers)",
+				msg.Action,
+				msg.StackName,
+				msg.Attempted,
+			)
+		}
+		m.clearDashboardAction()
+		return m, tea.Batch(
+			func() tea.Msg { return collectDockerCmd() },
+			clearActionResultCmd(),
+		)
 
 	case ClearActionResultMsg:
 		m.actionResult = ""
@@ -542,6 +585,20 @@ func quickMenuItems(state string) []quickMenuItem {
 	return items
 }
 
+func stackQuickMenuItems(running, stopped int) []quickMenuItem {
+	var items []quickMenuItem
+	if stopped > 0 {
+		items = append(items, quickMenuItem{"Start Stack", "S", "start"})
+	}
+	if running > 0 {
+		items = append(items,
+			quickMenuItem{"Stop Stack", "s", "stop"},
+			quickMenuItem{"Restart Stack", "R", "restart"},
+		)
+	}
+	return items
+}
+
 // viewString wraps a pre-rendered string as a tea.Model for use with overlay.
 type viewString struct{ s string }
 
@@ -549,9 +606,21 @@ func (v *viewString) Init() tea.Cmd                       { return nil }
 func (v *viewString) Update(tea.Msg) (tea.Model, tea.Cmd) { return v, nil }
 func (v *viewString) View() string                        { return v.s }
 
+func (m Model) currentQuickMenuItems() []quickMenuItem {
+	if stack := m.quickMenuStackPreview(); stack != nil {
+		return stackQuickMenuItems(stack.RunningCount, stack.StoppedCount)
+	}
+	if m.quickMenuContainer != nil {
+		return quickMenuItems(m.quickMenuContainer.State)
+	}
+	return nil
+}
+
 func (m Model) renderQuickMenu(base string) string {
-	c := m.quickMenuContainer
-	items := quickMenuItems(c.State)
+	items := m.currentQuickMenuItems()
+	if len(items) == 0 {
+		return base
+	}
 
 	baseW := lipgloss.Width(base)
 
@@ -559,8 +628,18 @@ func (m Model) renderQuickMenu(base string) string {
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 	mutedStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
 
-	// Menu width adapts to container name
-	menuInner := len(c.Name) + 6
+	titleText := ""
+	statusText := ""
+	if stack := m.quickMenuStackPreview(); stack != nil {
+		titleText = stack.Name
+		statusText = fmt.Sprintf("%d/%d up", stack.RunningCount, stack.ContainerCount)
+	} else if c := m.quickMenuContainer; c != nil {
+		titleText = c.Name
+		statusText = c.State
+	}
+
+	// Menu width adapts to target name
+	menuInner := len(titleText) + 6
 	if menuInner < 28 {
 		menuInner = 28
 	}
@@ -568,14 +647,18 @@ func (m Model) renderQuickMenu(base string) string {
 		menuInner = baseW - 8
 	}
 
-	// Title bar: container name centered, state on the right
-	name := c.Name
+	// Title bar: target name centered, state/summary on the right
+	name := titleText
 	if len(name) > menuInner-2 {
 		name = name[:menuInner-2]
 	}
-	stateColor := styles.ContainerStateColor(c.State)
-	stateStyled := lipgloss.NewStyle().Foreground(stateColor).Render(c.State)
 	nameStyled := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true).Render(name)
+	stateStyled := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(statusText)
+	if c := m.quickMenuContainer; c != nil {
+		stateStyled = lipgloss.NewStyle().
+			Foreground(styles.ContainerStateColor(c.State)).
+			Render(c.State)
+	}
 	titleGap := menuInner - lipgloss.Width(nameStyled) - lipgloss.Width(stateStyled)
 	if titleGap < 1 {
 		titleGap = 1
@@ -715,6 +798,8 @@ func (m *Model) rebuildDisplayItems() {
 		unhealthy  int
 		starting   int
 		stopped    int
+		cpuTotal   float64
+		memTotal   uint64
 	}
 	groupMap := make(map[string]*stackGroup)
 	var groupOrder []string
@@ -754,6 +839,8 @@ func (m *Model) rebuildDisplayItems() {
 		case "starting":
 			g.starting++
 		}
+		g.cpuTotal += c.CPUPerc
+		g.memTotal += c.MemUsed
 	}
 
 	sort.Strings(groupOrder)
@@ -775,6 +862,8 @@ func (m *Model) rebuildDisplayItems() {
 			UnhealthyCount: g.unhealthy,
 			StartingCount:  g.starting,
 			StoppedCount:   g.stopped,
+			CPUPercTotal:   g.cpuTotal,
+			MemUsedTotal:   g.memTotal,
 			Collapsed:      collapsed,
 		})
 		if !collapsed {
@@ -852,7 +941,7 @@ func (m Model) renderDashboard() string {
 		m.searchInput, m.filtering)
 
 	// Quick-action menu overlay
-	if m.quickMenuOpen && m.quickMenuContainer != nil {
+	if m.quickMenuOpen {
 		containersPanel = m.renderQuickMenu(containersPanel)
 	}
 
@@ -911,8 +1000,9 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 
 	previewBar := panels.RenderPreview(
 		m.selectedContainer(),
+		m.selectedStackPreview(),
 		m.confirmAction,
-		m.dashboardActionContainerName,
+		m.dashboardActionTargetName,
 		m.actionResult,
 		m.width,
 	)
@@ -958,6 +1048,57 @@ func (m Model) selectedContainer() *collector.Container {
 		return m.displayItems[m.selectedIndex].Container
 	}
 	return nil
+}
+
+func (m Model) selectedStackPreview() *panels.StackPreview {
+	if m.selectedIndex < 0 || m.selectedIndex >= len(m.displayItems) {
+		return nil
+	}
+
+	item := m.displayItems[m.selectedIndex]
+	if item.Kind != DisplayGroup {
+		return nil
+	}
+
+	return &panels.StackPreview{
+		Name:           item.StackName,
+		ContainerCount: item.ContainerCount,
+		RunningCount:   item.RunningCount,
+		UnhealthyCount: item.UnhealthyCount,
+		StartingCount:  item.StartingCount,
+		StoppedCount:   item.StoppedCount,
+		CPUPerc:        item.CPUPercTotal,
+		MemUsed:        item.MemUsedTotal,
+	}
+}
+
+func (m Model) quickMenuStackPreview() *panels.StackPreview {
+	if m.quickMenuStackName == "" {
+		return nil
+	}
+
+	for _, item := range m.displayItems {
+		if item.Kind == DisplayGroup && item.StackName == m.quickMenuStackName {
+			return &panels.StackPreview{
+				Name:           item.StackName,
+				ContainerCount: item.ContainerCount,
+				RunningCount:   item.RunningCount,
+				UnhealthyCount: item.UnhealthyCount,
+				StartingCount:  item.StartingCount,
+				StoppedCount:   item.StoppedCount,
+				CPUPerc:        item.CPUPercTotal,
+				MemUsed:        item.MemUsedTotal,
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *Model) clearDashboardAction() {
+	m.dashboardActionContainerID = ""
+	m.dashboardActionStackName = ""
+	m.dashboardActionTargetName = ""
 }
 
 func renderedLineCount(s string) int {

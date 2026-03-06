@@ -37,6 +37,15 @@ type ContainerActionMsg struct {
 	Err         error
 }
 
+// StackActionMsg carries the result of a stack action.
+type StackActionMsg struct {
+	StackName string
+	Action    string
+	Attempted int
+	Failed    []string
+	Err       error
+}
+
 // ClearActionResultMsg clears the action result message after a delay.
 type ClearActionResultMsg struct{}
 
