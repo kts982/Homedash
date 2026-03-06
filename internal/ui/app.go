@@ -38,6 +38,9 @@ type DisplayItem struct {
 	StackName      string
 	ContainerCount int
 	RunningCount   int
+	UnhealthyCount int
+	StartingCount  int
+	StoppedCount   int
 	Container      *collector.Container
 	Collapsed      bool
 }
@@ -709,6 +712,9 @@ func (m *Model) rebuildDisplayItems() {
 		name       string
 		containers []*collector.Container
 		running    int
+		unhealthy  int
+		starting   int
+		stopped    int
 	}
 	groupMap := make(map[string]*stackGroup)
 	var groupOrder []string
@@ -739,6 +745,14 @@ func (m *Model) rebuildDisplayItems() {
 		g.containers = append(g.containers, c)
 		if c.State == "running" {
 			g.running++
+		} else {
+			g.stopped++
+		}
+		switch c.Health {
+		case "unhealthy":
+			g.unhealthy++
+		case "starting":
+			g.starting++
 		}
 	}
 
@@ -758,6 +772,9 @@ func (m *Model) rebuildDisplayItems() {
 			StackName:      name,
 			ContainerCount: len(g.containers),
 			RunningCount:   g.running,
+			UnhealthyCount: g.unhealthy,
+			StartingCount:  g.starting,
+			StoppedCount:   g.stopped,
 			Collapsed:      collapsed,
 		})
 		if !collapsed {
@@ -819,6 +836,9 @@ func (m Model) renderDashboard() string {
 			StackName:      item.StackName,
 			ContainerCount: item.ContainerCount,
 			RunningCount:   item.RunningCount,
+			UnhealthyCount: item.UnhealthyCount,
+			StartingCount:  item.StartingCount,
+			StoppedCount:   item.StoppedCount,
 			Collapsed:      item.Collapsed,
 			Container:      item.Container,
 		}
