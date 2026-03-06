@@ -15,7 +15,7 @@ var DefaultBindings = []KeyBinding{
 	{"tab", "focus"},
 	{"j/k", "select"},
 	{"/", "filter"},
-	{"enter", "details"},
+	{"enter", "open/toggle"},
 	{"space", "actions"},
 	{"s/S/R", "stop/start/restart"},
 	{"r", "refresh"},

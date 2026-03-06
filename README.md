@@ -6,7 +6,7 @@
 
 A terminal dashboard for single-host Linux homelabs.
 
-HomeDash combines host metrics, Docker Compose stacks, stack summaries, container logs, and common stack or container actions in one TUI. It is built for people running a personal server who want one operational view instead of jumping between `docker ps`, `docker logs`, `htop`, and ad-hoc scripts.
+HomeDash combines host metrics, Docker Compose stacks, stack summaries, container and stack logs, and common stack or container actions in one TUI. It is built for people running a personal server who want one operational view instead of jumping between `docker ps`, `docker logs`, `htop`, and ad-hoc scripts.
 
 It reads system data from `/proc`, talks directly to the Docker socket, and optionally fetches weather from [wttr.in](https://wttr.in).
 
@@ -39,14 +39,14 @@ Host metrics, Compose-stack grouping, and container state in one view.
 <img width="395" alt="HomeDash quick actions menu" src="docs/screenshots/quick-actions.png" />
 </p>
 
-Full-screen logs, container metadata, and quick actions without leaving the TUI.
+Full-screen container and stack logs, detail metadata, and quick actions without leaving the TUI.
 
 ## Features
 
 - **Unified homelab view** - host metrics, Docker containers, and quick actions in one terminal UI
 - **Compose-stack grouping and summaries** - containers grouped by `com.docker.compose.project`, with collapsible stacks, health counts, and aggregate stack status
-- **Container detail view** - full-screen log viewer with follow mode, port mappings, mounts, and start/stop/restart actions
-- **Quick-action menu** - `space` opens fast stack or container actions without leaving the dashboard
+- **Container and stack detail views** - full-screen log viewers with follow mode, merged stack logs, published port hints, mounts, and start/stop/restart actions
+- **Quick-action menu** - `space` opens fast stack or container actions, including stack logs, without leaving the dashboard
 - **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
 - **Container search** - filter containers by name with `/`
 - **Notifications** - Docker state changes, disk warnings, and weather errors
@@ -72,9 +72,9 @@ Expect ongoing UI and feature changes while the project settles.
 
 Near term:
 
-- more detail-view polish for logs and metadata
-- stack-level log workflows
 - packaging and release improvements
+- docs and screenshot refresh for stack detail and log workflows
+- stack-log usability polish
 - more test coverage around UI layout and Docker edge cases
 
 Not planned:
@@ -143,7 +143,7 @@ system:
 |-----|--------|
 | `tab` / `shift+tab` | Cycle focused panel |
 | `j` / `k` or `Up` / `Down` | Select container / group |
-| `enter` | Expand/collapse stack group, or open detail view |
+| `enter` | Expand/collapse selected stack, or open selected container detail |
 | `space` | Open quick-action menu for selected container or stack |
 | `/` | Search / filter containers |
 | `s` | Stop selected container or stack (with confirmation) |
@@ -152,18 +152,21 @@ system:
 | `r` | Force refresh all data |
 | `q` / `ctrl+c` | Quit |
 
-### Container Detail View
+### Detail View
 
 | Key | Action |
 |-----|--------|
 | `esc` / `q` | Back to dashboard |
 | `j` / `k` or `Up` / `Down` | Scroll logs |
+| `ctrl+u` / `ctrl+d` or `PgUp` / `PgDn` | Scroll by half page |
 | `g` / `G` | Jump to top / bottom of logs |
 | `f` | Toggle log follow mode (live streaming) |
 | `l` | Refresh logs |
-| `s` | Stop container |
-| `S` | Start container |
-| `R` | Restart container |
+| `s` | Stop current container or stack |
+| `S` | Start current container or stack |
+| `R` | Restart current container or stack |
+
+Selecting `View Stack Logs` from the stack quick-action menu opens a merged stack log view while leaving `enter` on dashboard stack rows reserved for expand/collapse.
 
 ### Mouse
 
@@ -182,7 +185,7 @@ system:
 wttr.in JSON API               ──5min──>  Weather panel
 ```
 
-Most data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses a streaming goroutine tied to the active detail view.
+Most data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses streaming goroutines tied to the active container or stack detail view.
 
 Containers are grouped by the `com.docker.compose.project` label, so any compose-based setup works automatically. Standalone containers appear ungrouped.
 
