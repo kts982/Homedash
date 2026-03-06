@@ -21,6 +21,7 @@ func (m *Model) enterDetailView(c *collector.Container) tea.Cmd {
 	m.viewMode = ViewDetail
 	m.detailContainer = c
 	m.detailContainerID = c.ID
+	m.detailStackName = ""
 	m.detailScrollOffset = 0
 	m.detailLogs = nil
 	m.detailLogsErr = nil
@@ -35,6 +36,22 @@ func (m *Model) enterDetailView(c *collector.Container) tea.Cmd {
 	)
 }
 
+func (m *Model) enterStackDetailView(stackName string) tea.Cmd {
+	m.viewMode = ViewDetail
+	m.detailContainer = nil
+	m.detailContainerID = ""
+	m.detailStackName = stackName
+	m.detailScrollOffset = 0
+	m.detailLogs = nil
+	m.detailLogsErr = nil
+	m.detailMeta = nil
+	m.detailMetaErr = nil
+	m.confirmAction = ""
+	m.actionResult = ""
+	m.recalcLayout()
+	return collectStackLogsCmd(m.dockerData.Containers, stackName, 50)
+}
+
 func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -44,14 +61,7 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "q":
 		if m.viewMode == ViewDetail {
-			m.stopFollowing()
-			m.viewMode = ViewDashboard
-			m.detailContainer = nil
-			m.detailLogs = nil
-			m.detailMeta = nil
-			m.detailMetaErr = nil
-			m.confirmAction = ""
-			m.actionResult = ""
+			m.clearDetailView()
 			return m, nil
 		}
 		if m.collapseSeq > m.lastSavedSeq {
@@ -132,11 +142,18 @@ func (m *Model) closeQuickMenu() {
 }
 
 func (m *Model) executeQuickMenuItem(item quickMenuItem) (tea.Model, tea.Cmd) {
-	if item.action == "logs" && m.quickMenuContainer != nil {
-		container := m.quickMenuContainer
-		m.closeQuickMenu()
-		cmd := m.enterDetailView(container)
-		return m, cmd
+	if item.action == "logs" {
+		if m.quickMenuStackName != "" {
+			stackName := m.quickMenuStackName
+			m.closeQuickMenu()
+			return m, m.enterStackDetailView(stackName)
+		}
+		if m.quickMenuContainer != nil {
+			container := m.quickMenuContainer
+			m.closeQuickMenu()
+			cmd := m.enterDetailView(container)
+			return m, cmd
+		}
 	}
 	return m.executeQuickMenuAction(item.action)
 }
@@ -430,6 +447,9 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		case "y":
 			action := m.confirmAction
 			m.confirmAction = ""
+			if m.detailStackName != "" {
+				return m, stackActionCmd(m.dockerData.Containers, m.detailStackName, action)
+			}
 			return m, containerActionCmd(m.detailContainerID, action)
 		case "n", "esc":
 			m.confirmAction = ""
@@ -439,12 +459,7 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
-		m.stopFollowing()
-		m.viewMode = ViewDashboard
-		m.detailContainer = nil
-		m.detailLogs = nil
-		m.detailMeta = nil
-		m.detailMetaErr = nil
+		m.clearDetailView()
 	case "f":
 		if m.logFollowing {
 			m.stopFollowing()
@@ -479,19 +494,37 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.stopFollowing()
 		m.detailLogs = nil
 		m.detailLogsErr = nil
+		if m.detailStackName != "" {
+			return m, collectStackLogsCmd(m.dockerData.Containers, m.detailStackName, 50)
+		}
 		return m, collectLogsCmd(m.detailContainerID, 50)
 	case "s":
-		if m.detailContainer != nil && m.detailContainer.State == "running" {
+		if stack := m.detailStackData(); stack != nil {
+			if stack.RunningCount > 0 {
+				m.stopFollowing()
+				m.confirmAction = "stop"
+			}
+		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
 			m.stopFollowing()
 			m.confirmAction = "stop"
 		}
 	case "S":
-		if m.detailContainer != nil && m.detailContainer.State != "running" {
+		if stack := m.detailStackData(); stack != nil {
+			if stack.StoppedCount > 0 {
+				m.stopFollowing()
+				m.confirmAction = "start"
+			}
+		} else if m.detailContainer != nil && m.detailContainer.State != "running" {
 			m.stopFollowing()
 			m.confirmAction = "start"
 		}
 	case "R":
-		if m.detailContainer != nil && m.detailContainer.State == "running" {
+		if stack := m.detailStackData(); stack != nil {
+			if stack.RunningCount > 0 {
+				m.stopFollowing()
+				m.confirmAction = "restart"
+			}
+		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
 			m.stopFollowing()
 			m.confirmAction = "restart"
 		}

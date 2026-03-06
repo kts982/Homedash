@@ -60,6 +60,13 @@ func collectLogsCmd(containerID string, tail int) tea.Cmd {
 	}
 }
 
+func collectStackLogsCmd(containers []collector.Container, stackName string, tail int) tea.Cmd {
+	return func() tea.Msg {
+		lines, err := collector.FetchStackLogs(containers, stackName, tail)
+		return StackLogsMsg{StackName: stackName, Lines: lines, Err: err}
+	}
+}
+
 func containerActionCmd(containerID, action string) tea.Cmd {
 	return func() tea.Msg {
 		err := collector.ContainerAction(containerID, action)

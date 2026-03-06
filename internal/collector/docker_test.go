@@ -181,6 +181,103 @@ func TestStreamContainerLogsJoinsLinesAcrossFrames(t *testing.T) {
 	}
 }
 
+func TestFetchStackLogsMergesAndPrefixesByTimestamp(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/v1.47/containers/web/logs":
+			_, _ = w.Write([]byte(strings.Join([]string{
+				"2026-03-06T12:00:02Z web ready",
+				"2026-03-06T12:00:04Z web request",
+			}, "\n") + "\n"))
+		case "/v1.47/containers/db/logs":
+			_, _ = w.Write([]byte(strings.Join([]string{
+				"2026-03-06T12:00:01Z db start",
+				"2026-03-06T12:00:03Z db ready",
+			}, "\n") + "\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	saveDockerState(t)
+	SetDockerHost(server.URL)
+
+	containers := []Container{
+		{ID: "web", Name: "web", Stack: "media"},
+		{ID: "db", Name: "db", Stack: "media"},
+		{ID: "proxy", Name: "proxy", Stack: "edge"},
+	}
+
+	got, err := FetchStackLogs(containers, "media", 50)
+	if err != nil {
+		t.Fatalf("FetchStackLogs() returned error: %v", err)
+	}
+
+	want := []string{
+		"2026-03-06T12:00:01Z [db] db start",
+		"2026-03-06T12:00:02Z [web] web ready",
+		"2026-03-06T12:00:03Z [db] db ready",
+		"2026-03-06T12:00:04Z [web] web request",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("FetchStackLogs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestStreamStackLogsPrefixesContainerNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/v1.47/containers/web/logs":
+			_, _ = w.Write(dockerFrame(0x01, "2026-03-06T12:00:02Z web ready\n"))
+		case "/v1.47/containers/db/logs":
+			_, _ = w.Write(dockerFrame(0x01, "2026-03-06T12:00:01Z db ready\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	saveDockerState(t)
+	SetDockerHost(server.URL)
+
+	containers := []Container{
+		{ID: "web", Name: "web", Stack: "media"},
+		{ID: "db", Name: "db", Stack: "media"},
+	}
+
+	lines := make(chan string, 8)
+	err := StreamStackLogs(context.Background(), containers, "media", 50, lines)
+	close(lines)
+	if err != nil {
+		t.Fatalf("StreamStackLogs() returned error: %v", err)
+	}
+
+	got := make(map[string]bool)
+	for line := range lines {
+		got[line] = true
+	}
+
+	for _, want := range []string{
+		"2026-03-06T12:00:01Z [db] db ready",
+		"2026-03-06T12:00:02Z [web] web ready",
+	} {
+		if !got[want] {
+			t.Fatalf("StreamStackLogs() missing %q in %#v", want, got)
+		}
+	}
+}
+
 func saveDockerState(t *testing.T) {
 	t.Helper()
 	oldHost := dockerHost
