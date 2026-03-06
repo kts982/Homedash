@@ -250,19 +250,7 @@ func RenderDetail(
 		logContentHeight = 1
 	}
 
-	// Build log lines
-	var logLines []string
-	if logs == nil && logsErr == nil {
-		logLines = []string{lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Loading logs...")}
-	} else if logsErr != nil {
-		logLines = []string{lipgloss.NewStyle().Foreground(styles.Error).Render(fmt.Sprintf("Error: %v", logsErr))}
-	} else if len(logs) == 0 {
-		logLines = []string{lipgloss.NewStyle().Foreground(styles.TextMuted).Render("No logs available")}
-	} else {
-		for _, line := range logs {
-			logLines = append(logLines, formatLogLine(line, innerWidth))
-		}
-	}
+	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth)
 
 	// Clamp scroll offset
 	maxScroll := len(logLines) - logContentHeight
@@ -276,19 +264,7 @@ func RenderDetail(
 		scrollOffset = 0
 	}
 
-	// Log title with optional scroll position
-	logTitleLeft := "LOGS (last 50 lines)"
-	if logFollowing {
-		logTitleLeft = lipgloss.NewStyle().Foreground(styles.Success).Render("LOGS (following...)")
-	}
-	if len(logLines) > logContentHeight {
-		endPos := min(scrollOffset+logContentHeight, len(logLines))
-		scrollText := fmt.Sprintf("(%d-%d/%d)", scrollOffset+1, endPos, len(logLines))
-		scrollStyled := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(scrollText)
-		if lipgloss.Width(logTitleLeft)+2+lipgloss.Width(scrollStyled) <= titleAvail {
-			logTitleLeft += "  " + scrollStyled
-		}
-	}
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail)
 
 	// Slice visible log lines
 	endIdx := scrollOffset + logContentHeight
@@ -334,6 +310,7 @@ func renderDetailActionBar(c *collector.Container, confirmAction, actionResult s
 		parts := []string{
 			keyStyle.Render("esc") + descStyle.Render(" back"),
 			keyStyle.Render("j/k") + descStyle.Render(" scroll"),
+			keyStyle.Render("ctrl+u/d") + descStyle.Render(" page"),
 			keyStyle.Render("g/G") + descStyle.Render(" top/end"),
 			keyStyle.Render("f") + descStyle.Render(" "+followLabel),
 			keyStyle.Render("l") + descStyle.Render(" refresh"),
@@ -392,6 +369,101 @@ func formatLogLine(line string, maxWidth int) string {
 	}
 
 	return lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+}
+
+type detailLogState int
+
+const (
+	detailLogStateLoaded detailLogState = iota
+	detailLogStateLoading
+	detailLogStateWaiting
+	detailLogStateEmpty
+	detailLogStateError
+)
+
+func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int) ([]string, detailLogState) {
+	switch {
+	case logs == nil && logsErr == nil && logFollowing:
+		return []string{
+			lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Waiting for live log output..."),
+			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Follow mode is active."),
+		}, detailLogStateWaiting
+	case logs == nil && logsErr == nil:
+		return []string{
+			lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Loading logs..."),
+			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Fetching the last 50 lines from Docker."),
+		}, detailLogStateLoading
+	case logsErr != nil:
+		return []string{
+			lipgloss.NewStyle().Foreground(styles.Error).Render("Log refresh failed"),
+			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(
+				lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth).Render(logsErr.Error())),
+		}, detailLogStateError
+	case len(logs) == 0 && logFollowing:
+		return []string{
+			lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Following log stream..."),
+			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("No log lines received yet."),
+		}, detailLogStateWaiting
+	case len(logs) == 0:
+		return []string{
+			lipgloss.NewStyle().Foreground(styles.TextMuted).Render("No logs available"),
+			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Docker returned no log lines for this container."),
+		}, detailLogStateEmpty
+	default:
+		rendered := make([]string, 0, len(logs))
+		for _, line := range logs {
+			rendered = append(rendered, formatLogLine(line, innerWidth))
+		}
+		return rendered, detailLogStateLoaded
+	}
+}
+
+func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int) string {
+	titleStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
+	statusStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
+
+	titleText := "LOGS"
+	switch state {
+	case detailLogStateLoading:
+		titleText = "LOGS (loading)"
+		statusStyle = lipgloss.NewStyle().Foreground(styles.TextMuted)
+	case detailLogStateWaiting:
+		titleText = "LOGS (live)"
+		statusStyle = lipgloss.NewStyle().Foreground(styles.Success)
+	case detailLogStateEmpty:
+		titleText = "LOGS (empty)"
+		statusStyle = lipgloss.NewStyle().Foreground(styles.TextMuted)
+	case detailLogStateError:
+		titleText = "LOGS (error)"
+		statusStyle = lipgloss.NewStyle().Foreground(styles.Error)
+	}
+	title := titleStyle.Render(titleText)
+
+	statusText := ""
+	switch state {
+	case detailLogStateLoaded:
+		statusText = fmt.Sprintf("%d lines", lineCount)
+	case detailLogStateLoading:
+		statusText = "fetching tail"
+	case detailLogStateWaiting:
+		statusText = "following"
+	case detailLogStateEmpty:
+		statusText = "no output"
+	case detailLogStateError:
+		statusText = "refresh failed"
+	}
+	if lineCount > 0 {
+		endPos := min(scrollOffset+logContentHeight, lineCount)
+		statusText = fmt.Sprintf("%s  %d-%d/%d", statusText, scrollOffset+1, endPos, lineCount)
+	}
+	if statusText == "" {
+		return title
+	}
+	renderedStatus := statusStyle.Render(statusText)
+	if lipgloss.Width(title)+2+lipgloss.Width(renderedStatus) <= titleAvail {
+		return title + "  " + renderedStatus
+	}
+	return title
 }
 
 // detectLogLevel checks the first portion of a log message for level keywords.
