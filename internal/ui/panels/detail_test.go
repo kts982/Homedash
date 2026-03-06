@@ -71,3 +71,52 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDetailShowsLiveWaitingState(t *testing.T) {
+	c := &collector.Container{
+		ID:    "abc123",
+		Name:  "svc",
+		Image: "svc:latest",
+		State: "running",
+	}
+
+	view := RenderDetail(c, nil, nil, nil, "", "", 0, 90, 20, true)
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"LOGS (live)",
+		"Waiting for live log output...",
+		"Follow mode is active.",
+		"ctrl+u/d page",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
+func TestRenderDetailShowsLogErrorState(t *testing.T) {
+	c := &collector.Container{
+		ID:    "abc123",
+		Name:  "svc",
+		Image: "svc:latest",
+		State: "running",
+	}
+
+	view := RenderDetail(c, nil, nil, assertErr("socket closed"), "", "", 0, 90, 20, false)
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"LOGS (error)",
+		"Log refresh failed",
+		"socket closed",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }

@@ -407,6 +407,22 @@ func handleDetailMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func detailMaxScroll(m *Model) int {
+	maxScroll := len(m.detailLogs) - m.detailLogRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	return maxScroll
+}
+
+func detailPageStep(m *Model) int {
+	step := m.detailLogRows / 2
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
 func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first
 	if m.confirmAction != "" {
@@ -436,10 +452,7 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			return m, m.startFollowing()
 		}
 	case "j", "down":
-		maxScroll := len(m.detailLogs) - m.detailLogRows
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := detailMaxScroll(m)
 		if m.detailScrollOffset < maxScroll {
 			m.detailScrollOffset++
 		}
@@ -447,14 +460,21 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.detailScrollOffset > 0 {
 			m.detailScrollOffset--
 		}
+	case "ctrl+d", "pgdown":
+		maxScroll := detailMaxScroll(m)
+		m.detailScrollOffset += detailPageStep(m)
+		if m.detailScrollOffset > maxScroll {
+			m.detailScrollOffset = maxScroll
+		}
+	case "ctrl+u", "pgup":
+		m.detailScrollOffset -= detailPageStep(m)
+		if m.detailScrollOffset < 0 {
+			m.detailScrollOffset = 0
+		}
 	case "g", "home":
 		m.detailScrollOffset = 0
 	case "G", "end":
-		maxScroll := len(m.detailLogs) - m.detailLogRows
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		m.detailScrollOffset = maxScroll
+		m.detailScrollOffset = detailMaxScroll(m)
 	case "l":
 		m.stopFollowing()
 		m.detailLogs = nil

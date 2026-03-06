@@ -324,6 +324,33 @@ func TestRecalcLayoutCountsPolishedDetailMetadataRows(t *testing.T) {
 	}
 }
 
+func TestHandleDetailKeyPagesDown(t *testing.T) {
+	m := newTestModel()
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 40)
+
+	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyCtrlD}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.detailScrollOffset != 5 {
+		t.Fatalf("detailScrollOffset = %d, want 5 after ctrl+d", updated.detailScrollOffset)
+	}
+}
+
+func TestHandleDetailKeyPagesUp(t *testing.T) {
+	m := newTestModel()
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 40)
+	m.detailScrollOffset = 9
+
+	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyCtrlU}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.detailScrollOffset != 4 {
+		t.Fatalf("detailScrollOffset = %d, want 4 after ctrl+u", updated.detailScrollOffset)
+	}
+}
+
 func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	m := newTestModel()
 	m.width = 60
