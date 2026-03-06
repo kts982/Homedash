@@ -96,6 +96,15 @@ make build
 ./homedash
 ```
 
+### Development
+
+Run the local checks before pushing:
+
+```bash
+go test ./...
+make lint
+```
+
 ### Requirements
 
 - **Linux** (reads from `/proc`)

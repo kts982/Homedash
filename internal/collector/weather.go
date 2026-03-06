@@ -27,27 +27,27 @@ type wttrResponse struct {
 }
 
 var weatherConditionIcons = map[string]string{
-	"Sunny":                          "☀",
-	"Clear":                          "☀",
-	"Partly Cloudy":                  "⛅",
-	"Partly cloudy":                  "⛅",
-	"Cloudy":                         "☁",
-	"Overcast":                       "☁",
-	"Mist":                           "🌫",
-	"Fog":                            "🌫",
-	"Patchy rain possible":           "🌦",
-	"Patchy rain nearby":             "🌦",
-	"Light rain":                     "🌧",
-	"Light Rain":                     "🌧",
-	"Moderate rain":                  "🌧",
-	"Heavy rain":                     "🌧",
-	"Light drizzle":                  "🌧",
-	"Patchy light drizzle":           "🌧",
-	"Thundery outbreaks possible":    "⛈",
-	"Light snow":                     "🌨",
-	"Moderate snow":                  "🌨",
-	"Heavy snow":                     "🌨",
-	"Patchy light snow":              "🌨",
+	"Sunny":                       "☀",
+	"Clear":                       "☀",
+	"Partly Cloudy":               "⛅",
+	"Partly cloudy":               "⛅",
+	"Cloudy":                      "☁",
+	"Overcast":                    "☁",
+	"Mist":                        "🌫",
+	"Fog":                         "🌫",
+	"Patchy rain possible":        "🌦",
+	"Patchy rain nearby":          "🌦",
+	"Light rain":                  "🌧",
+	"Light Rain":                  "🌧",
+	"Moderate rain":               "🌧",
+	"Heavy rain":                  "🌧",
+	"Light drizzle":               "🌧",
+	"Patchy light drizzle":        "🌧",
+	"Thundery outbreaks possible": "⛈",
+	"Light snow":                  "🌨",
+	"Moderate snow":               "🌨",
+	"Heavy snow":                  "🌨",
+	"Patchy light snow":           "🌨",
 }
 
 var weatherURL = "https://wttr.in/?format=j1"
@@ -61,7 +61,7 @@ func CollectWeather() (WeatherData, error) {
 	if err != nil {
 		return data, fmt.Errorf("weather fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode != 200 {
 		return data, fmt.Errorf("weather fetch: status %d", resp.StatusCode)
