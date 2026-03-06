@@ -151,7 +151,7 @@ func CollectDocker() (DockerData, error) {
 	if err != nil {
 		return data, fmt.Errorf("docker list: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return data, fmt.Errorf("docker list: status %d", resp.StatusCode)
@@ -264,7 +264,7 @@ func fetchContainerStats(id string) containerStats {
 	if err != nil {
 		return containerStats{}
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return containerStats{}
@@ -310,7 +310,7 @@ func FetchContainerLogs(containerID string, tail int) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker logs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("docker logs: status %d", resp.StatusCode)
@@ -443,7 +443,7 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 	if err != nil {
 		return fmt.Errorf("docker stream logs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("docker stream logs: status %d", resp.StatusCode)
@@ -811,7 +811,7 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 	if err != nil {
 		return detail, fmt.Errorf("docker inspect: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
@@ -1001,7 +1001,7 @@ func ContainerAction(containerID, action string) error {
 	if err != nil {
 		return fmt.Errorf("docker %s: %w", action, err)
 	}
-	defer resp.Body.Close()
+	defer closeQuietly(resp.Body)
 
 	if resp.StatusCode == 204 || resp.StatusCode == 304 {
 		return nil

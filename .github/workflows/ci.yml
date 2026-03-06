@@ -45,11 +45,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
       - name: golangci-lint
-        run: golangci-lint run
+        run: make lint
 
   race:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
