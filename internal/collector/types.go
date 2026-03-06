@@ -71,9 +71,20 @@ type Mount struct {
 	Type        string // bind, volume, tmpfs
 }
 
+type NetworkAddress struct {
+	Name string
+	IPv4 string
+	IPv6 string
+}
+
 type ContainerDetail struct {
-	Mounts []Mount
-	Labels map[string]string
+	Mounts        []Mount
+	Labels        map[string]string
+	RestartPolicy string
+	Command       string
+	CreatedAt     time.Time
+	StartedAt     time.Time
+	Networks      []NetworkAddress
 }
 
 type DockerData struct {
