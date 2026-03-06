@@ -6,7 +6,7 @@
 
 A terminal dashboard for single-host Linux homelabs.
 
-HomeDash combines host metrics, Docker Compose stacks, container logs, and common container actions in one TUI. It is built for people running a personal server who want one operational view instead of jumping between `docker ps`, `docker logs`, `htop`, and ad-hoc scripts.
+HomeDash combines host metrics, Docker Compose stacks, stack summaries, container logs, and common stack or container actions in one TUI. It is built for people running a personal server who want one operational view instead of jumping between `docker ps`, `docker logs`, `htop`, and ad-hoc scripts.
 
 It reads system data from `/proc`, talks directly to the Docker socket, and optionally fetches weather from [wttr.in](https://wttr.in).
 
@@ -44,9 +44,9 @@ Full-screen logs, container metadata, and quick actions without leaving the TUI.
 ## Features
 
 - **Unified homelab view** - host metrics, Docker containers, and quick actions in one terminal UI
-- **Compose-stack grouping** - containers grouped by `com.docker.compose.project`, with collapsible stacks
+- **Compose-stack grouping and summaries** - containers grouped by `com.docker.compose.project`, with collapsible stacks, health counts, and aggregate stack status
 - **Container detail view** - full-screen log viewer with follow mode, port mappings, mounts, and start/stop/restart actions
-- **Quick-action menu** - `space` opens fast container actions without leaving the dashboard
+- **Quick-action menu** - `space` opens fast stack or container actions without leaving the dashboard
 - **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
 - **Container search** - filter containers by name with `/`
 - **Notifications** - Docker state changes, disk warnings, and weather errors
@@ -72,8 +72,8 @@ Expect ongoing UI and feature changes while the project settles.
 
 Near term:
 
-- stack-level actions and summaries
 - more detail-view polish for logs and metadata
+- stack-level log workflows
 - packaging and release improvements
 - more test coverage around UI layout and Docker edge cases
 
@@ -144,11 +144,11 @@ system:
 | `tab` / `shift+tab` | Cycle focused panel |
 | `j` / `k` or `Up` / `Down` | Select container / group |
 | `enter` | Expand/collapse stack group, or open detail view |
-| `space` | Open quick-action menu for selected container |
+| `space` | Open quick-action menu for selected container or stack |
 | `/` | Search / filter containers |
-| `s` | Stop container (with confirmation) |
-| `S` | Start container (with confirmation) |
-| `R` | Restart container (with confirmation) |
+| `s` | Stop selected container or stack (with confirmation) |
+| `S` | Start selected container or stack (with confirmation) |
+| `R` | Restart selected container or stack (with confirmation) |
 | `r` | Force refresh all data |
 | `q` / `ctrl+c` | Quit |
 
