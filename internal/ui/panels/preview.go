@@ -9,9 +9,20 @@ import (
 	"github.com/kostas/homedash/internal/ui/styles"
 )
 
-// RenderPreview renders a single-line preview bar for the selected container.
+type StackPreview struct {
+	Name           string
+	ContainerCount int
+	RunningCount   int
+	UnhealthyCount int
+	StartingCount  int
+	StoppedCount   int
+	CPUPerc        float64
+	MemUsed        uint64
+}
+
+// RenderPreview renders a single-line preview bar for the selected container or stack.
 // When confirmAction or actionResult is set, it shows that instead of the normal preview.
-func RenderPreview(c *collector.Container, confirmAction, confirmName, actionResult string, width int) string {
+func RenderPreview(c *collector.Container, stack *StackPreview, confirmAction, confirmName, actionResult string, width int) string {
 	barStyle := lipgloss.NewStyle().
 		Background(styles.BgPanel).
 		Foreground(styles.TextPrimary).
@@ -46,7 +57,57 @@ func RenderPreview(c *collector.Container, confirmAction, confirmName, actionRes
 	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
 	if c == nil {
-		return barStyle.Render(labelStyle.Render("No container selected"))
+		if stack == nil {
+			return barStyle.Render(labelStyle.Render("No container selected"))
+		}
+		maxContentW := width - 2 // padding(0,1)
+		summarySegments := buildStackSummarySegments(
+			stack.RunningCount,
+			stack.ContainerCount,
+			stack.UnhealthyCount,
+			stack.StartingCount,
+			stack.StoppedCount,
+		)
+		prefix := "stack "
+		statusPrefix := "  status "
+		summarySegments = fitStackSummarySegments(
+			summarySegments,
+			maxContentW-lipgloss.Width(prefix)-lipgloss.Width(statusPrefix),
+		)
+		summary := renderStackSummarySegments(summarySegments)
+		resourceWidth := 0
+		showResources := stack.RunningCount > 0
+		resourceValueCPU := fmt.Sprintf("%.1f%%", stack.CPUPerc)
+		resourceValueMem := collector.FormatBytes(stack.MemUsed)
+		resourceText := ""
+		if showResources {
+			resourceText = labelStyle.Render("  cpu ") + valueStyle.Render(resourceValueCPU) +
+				labelStyle.Render("  mem ") + valueStyle.Render(resourceValueMem)
+			resourceWidth = lipgloss.Width("  cpu ") + lipgloss.Width(resourceValueCPU) +
+				lipgloss.Width("  mem ") + lipgloss.Width(resourceValueMem)
+		}
+		nameWidth := maxContentW - lipgloss.Width(prefix)
+		if summary != "" {
+			nameWidth -= lipgloss.Width(statusPrefix) + stackSummaryWidth(summarySegments)
+		}
+		if showResources && nameWidth-resourceWidth >= 10 {
+			nameWidth -= resourceWidth
+		} else {
+			showResources = false
+		}
+		if nameWidth < 1 {
+			nameWidth = 1
+		}
+		name := lipgloss.NewStyle().Inline(true).MaxWidth(nameWidth).Render(stack.Name)
+		row := labelStyle.Render("stack ") + valueStyle.Render(name)
+		if summary != "" {
+			row += labelStyle.Render("  status ") + summary
+		}
+		if showResources {
+			row += resourceText
+		}
+		row = lipgloss.NewStyle().Inline(true).MaxWidth(maxContentW).Render(row)
+		return barStyle.Render(row)
 	}
 
 	stateColor := styles.ContainerStateColor(c.State)

@@ -307,7 +307,7 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
-	previewBar := panels.RenderPreview(nil, m.confirmAction, m.dashboardActionContainerName, m.actionResult, m.width)
+	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
 	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 
@@ -348,7 +348,7 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
-	previewBar := panels.RenderPreview(nil, m.confirmAction, m.dashboardActionContainerName, m.actionResult, m.width)
+	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
 	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(topRow, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
@@ -400,6 +400,110 @@ func TestQuickMenuItemsStopped(t *testing.T) {
 	}
 	if items[1].action != "start" {
 		t.Fatalf("items[1].action = %q, want %q", items[1].action, "start")
+	}
+}
+
+func TestStackQuickMenuItemsMixed(t *testing.T) {
+	items := stackQuickMenuItems(2, 1)
+
+	if len(items) != 3 {
+		t.Fatalf("len(items) = %d, want 3", len(items))
+	}
+	if items[0].action != "start" {
+		t.Fatalf("items[0].action = %q, want %q", items[0].action, "start")
+	}
+	if items[1].action != "stop" {
+		t.Fatalf("items[1].action = %q, want %q", items[1].action, "stop")
+	}
+	if items[2].action != "restart" {
+		t.Fatalf("items[2].action = %q, want %q", items[2].action, "restart")
+	}
+}
+
+func TestHandleDashboardKeyOpensStackQuickMenu(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.displayItems = []DisplayItem{
+		{
+			Kind:         DisplayGroup,
+			StackName:    "media",
+			RunningCount: 2,
+			StoppedCount: 1,
+		},
+	}
+
+	updatedModel, _ := handleDashboardKey(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune{' '},
+	}, &m)
+	updated := updatedModel.(*Model)
+
+	if !updated.quickMenuOpen {
+		t.Fatal("quickMenuOpen = false, want true for stack row")
+	}
+	if updated.quickMenuStackName != "media" {
+		t.Fatalf("quickMenuStackName = %q, want %q", updated.quickMenuStackName, "media")
+	}
+	if updated.quickMenuContainerID != "" {
+		t.Fatalf("quickMenuContainerID = %q, want empty for stack row", updated.quickMenuContainerID)
+	}
+}
+
+func TestHandleDashboardKeySetsStackConfirmAction(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.displayItems = []DisplayItem{
+		{
+			Kind:         DisplayGroup,
+			StackName:    "media",
+			RunningCount: 2,
+			StoppedCount: 1,
+		},
+	}
+
+	updatedModel, _ := handleDashboardKey(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune{'s'},
+	}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.confirmAction != "stop" {
+		t.Fatalf("confirmAction = %q, want %q", updated.confirmAction, "stop")
+	}
+	if updated.dashboardActionStackName != "media" {
+		t.Fatalf("dashboardActionStackName = %q, want %q", updated.dashboardActionStackName, "media")
+	}
+	if updated.dashboardActionTargetName != "media" {
+		t.Fatalf("dashboardActionTargetName = %q, want %q", updated.dashboardActionTargetName, "media")
+	}
+	if updated.dashboardActionContainerID != "" {
+		t.Fatalf("dashboardActionContainerID = %q, want empty for stack action", updated.dashboardActionContainerID)
+	}
+}
+
+func TestUpdateStackActionMsgClearsPendingDashboardAction(t *testing.T) {
+	m := newTestModel()
+	m.dashboardActionStackName = "media"
+	m.dashboardActionTargetName = "media"
+
+	updatedModel, _ := m.Update(StackActionMsg{
+		StackName: "media",
+		Action:    "restart",
+		Attempted: 2,
+	})
+	updated := updatedModel.(Model)
+
+	if updated.confirmAction != "" {
+		t.Fatalf("confirmAction = %q, want empty", updated.confirmAction)
+	}
+	if updated.dashboardActionStackName != "" {
+		t.Fatalf("dashboardActionStackName = %q, want cleared", updated.dashboardActionStackName)
+	}
+	if updated.dashboardActionTargetName != "" {
+		t.Fatalf("dashboardActionTargetName = %q, want cleared", updated.dashboardActionTargetName)
+	}
+	if !strings.Contains(updated.actionResult, "Success: restart stack media (2 containers)") {
+		t.Fatalf("actionResult = %q, want success stack summary", updated.actionResult)
 	}
 }
 

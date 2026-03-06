@@ -9,6 +9,11 @@ import (
 	"github.com/kostas/homedash/internal/state"
 )
 
+type stackActionTarget struct {
+	ID   string
+	Name string
+}
+
 func collectSystemCmd(disks []config.Disk) tea.Msg {
 	data, err := collector.CollectSystem(disks)
 	return SystemDataMsg{Data: data, Err: err}
@@ -59,6 +64,54 @@ func containerActionCmd(containerID, action string) tea.Cmd {
 	return func() tea.Msg {
 		err := collector.ContainerAction(containerID, action)
 		return ContainerActionMsg{ContainerID: containerID, Action: action, Err: err}
+	}
+}
+
+func stackActionTargets(containers []collector.Container, stackName, action string) []stackActionTarget {
+	var targets []stackActionTarget
+	for _, c := range containers {
+		if c.Stack != stackName {
+			continue
+		}
+
+		switch action {
+		case "start":
+			if c.State == "running" {
+				continue
+			}
+		case "stop", "restart":
+			if c.State != "running" {
+				continue
+			}
+		default:
+			return nil
+		}
+
+		targets = append(targets, stackActionTarget{
+			ID:   c.ID,
+			Name: c.Name,
+		})
+	}
+	return targets
+}
+
+func stackActionCmd(containers []collector.Container, stackName, action string) tea.Cmd {
+	targets := stackActionTargets(containers, stackName, action)
+	return func() tea.Msg {
+		msg := StackActionMsg{
+			StackName: stackName,
+			Action:    action,
+			Attempted: len(targets),
+		}
+		for _, target := range targets {
+			if err := collector.ContainerAction(target.ID, action); err != nil {
+				if msg.Err == nil {
+					msg.Err = err
+				}
+				msg.Failed = append(msg.Failed, target.Name)
+			}
+		}
+		return msg
 	}
 }
 

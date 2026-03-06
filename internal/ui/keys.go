@@ -75,20 +75,19 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 }
 
 func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
-	c := m.quickMenuContainer
-	if c == nil {
-		m.quickMenuOpen = false
+	items := m.currentQuickMenuItems()
+	if len(items) == 0 {
+		m.closeQuickMenu()
 		return m, nil
 	}
 
-	items := quickMenuItems(c.State)
 	if m.quickMenuIndex >= len(items) {
 		m.quickMenuIndex = len(items) - 1
 	}
 
 	switch msg.String() {
 	case "esc", " ":
-		m.quickMenuOpen = false
+		m.closeQuickMenu()
 	case "j", "down":
 		if m.quickMenuIndex < len(items)-1 {
 			m.quickMenuIndex++
@@ -100,51 +99,108 @@ func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.executeQuickMenuItem(items[m.quickMenuIndex])
 	case "s":
-		if c.State == "running" {
+		if quickMenuHasAction(items, "stop") {
 			return m.executeQuickMenuAction("stop")
 		}
 	case "S":
-		if c.State != "running" {
+		if quickMenuHasAction(items, "start") {
 			return m.executeQuickMenuAction("start")
 		}
 	case "R":
-		if c.State == "running" {
+		if quickMenuHasAction(items, "restart") {
 			return m.executeQuickMenuAction("restart")
 		}
 	}
 	return m, nil
 }
 
+func quickMenuHasAction(items []quickMenuItem, action string) bool {
+	for _, item := range items {
+		if item.action == action {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) closeQuickMenu() {
+	m.quickMenuOpen = false
+	m.quickMenuIndex = 0
+	m.quickMenuContainerID = ""
+	m.quickMenuContainer = nil
+	m.quickMenuStackName = ""
+}
+
 func (m *Model) executeQuickMenuItem(item quickMenuItem) (tea.Model, tea.Cmd) {
-	if item.action == "logs" {
-		m.quickMenuOpen = false
-		cmd := m.enterDetailView(m.quickMenuContainer)
+	if item.action == "logs" && m.quickMenuContainer != nil {
+		container := m.quickMenuContainer
+		m.closeQuickMenu()
+		cmd := m.enterDetailView(container)
 		return m, cmd
 	}
 	return m.executeQuickMenuAction(item.action)
 }
 
 func (m *Model) executeQuickMenuAction(action string) (tea.Model, tea.Cmd) {
+	if m.quickMenuStackName != "" {
+		stackName := m.quickMenuStackName
+		m.closeQuickMenu()
+		return m, stackActionCmd(m.dockerData.Containers, stackName, action)
+	}
+
 	containerID := m.quickMenuContainerID
-	m.quickMenuOpen = false
+	m.closeQuickMenu()
 	return m, containerActionCmd(containerID, action)
+}
+
+func (m *Model) setDashboardContainerAction(action string, c *collector.Container) {
+	m.confirmAction = action
+	m.dashboardActionContainerID = c.ID
+	m.dashboardActionStackName = ""
+	m.dashboardActionTargetName = c.Name
+}
+
+func (m *Model) setDashboardStackAction(action, stackName string) {
+	m.confirmAction = action
+	m.dashboardActionContainerID = ""
+	m.dashboardActionStackName = stackName
+	m.dashboardActionTargetName = stackName
+}
+
+func stackActionAvailable(item DisplayItem, action string) bool {
+	if item.Kind != DisplayGroup {
+		return false
+	}
+
+	switch action {
+	case "start":
+		return item.StoppedCount > 0
+	case "stop", "restart":
+		return item.RunningCount > 0
+	default:
+		return false
+	}
 }
 
 func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first when an action is pending
-	if m.confirmAction != "" && m.dashboardActionContainerID != "" {
+	if m.confirmAction != "" && (m.dashboardActionContainerID != "" || m.dashboardActionStackName != "") {
 		switch msg.String() {
 		case "y":
 			action := m.confirmAction
 			containerID := m.dashboardActionContainerID
+			stackName := m.dashboardActionStackName
 			m.confirmAction = ""
-			m.dashboardActionContainerID = ""
-			m.dashboardActionContainerName = ""
-			return m, containerActionCmd(containerID, action)
+			m.clearDashboardAction()
+			if containerID != "" {
+				return m, containerActionCmd(containerID, action)
+			}
+			if stackName != "" {
+				return m, stackActionCmd(m.dockerData.Containers, stackName, action)
+			}
 		case "n", "esc":
 			m.confirmAction = ""
-			m.dashboardActionContainerID = ""
-			m.dashboardActionContainerName = ""
+			m.clearDashboardAction()
 		}
 		return m, nil
 	}
@@ -191,38 +247,48 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	case " ":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
-			if item.Kind == DisplayContainer && item.Container != nil {
+			if item.Kind == DisplayGroup {
+				items := stackQuickMenuItems(item.RunningCount, item.StoppedCount)
+				if len(items) > 0 {
+					m.quickMenuOpen = true
+					m.quickMenuIndex = 0
+					m.quickMenuStackName = item.StackName
+					m.quickMenuContainerID = ""
+					m.quickMenuContainer = nil
+				}
+			} else if item.Kind == DisplayContainer && item.Container != nil {
 				m.quickMenuOpen = true
 				m.quickMenuIndex = 0
 				m.quickMenuContainerID = item.Container.ID
 				m.quickMenuContainer = item.Container
+				m.quickMenuStackName = ""
 			}
 		}
 	case "s":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
-			if item.Kind == DisplayContainer && item.Container != nil && item.Container.State == "running" {
-				m.confirmAction = "stop"
-				m.dashboardActionContainerID = item.Container.ID
-				m.dashboardActionContainerName = item.Container.Name
+			if item.Kind == DisplayGroup && stackActionAvailable(item, "stop") {
+				m.setDashboardStackAction("stop", item.StackName)
+			} else if item.Kind == DisplayContainer && item.Container != nil && item.Container.State == "running" {
+				m.setDashboardContainerAction("stop", item.Container)
 			}
 		}
 	case "S":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
-			if item.Kind == DisplayContainer && item.Container != nil && item.Container.State != "running" {
-				m.confirmAction = "start"
-				m.dashboardActionContainerID = item.Container.ID
-				m.dashboardActionContainerName = item.Container.Name
+			if item.Kind == DisplayGroup && stackActionAvailable(item, "start") {
+				m.setDashboardStackAction("start", item.StackName)
+			} else if item.Kind == DisplayContainer && item.Container != nil && item.Container.State != "running" {
+				m.setDashboardContainerAction("start", item.Container)
 			}
 		}
 	case "R":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
-			if item.Kind == DisplayContainer && item.Container != nil && item.Container.State == "running" {
-				m.confirmAction = "restart"
-				m.dashboardActionContainerID = item.Container.ID
-				m.dashboardActionContainerName = item.Container.Name
+			if item.Kind == DisplayGroup && stackActionAvailable(item, "restart") {
+				m.setDashboardStackAction("restart", item.StackName)
+			} else if item.Kind == DisplayContainer && item.Container != nil && item.Container.State == "running" {
+				m.setDashboardContainerAction("restart", item.Container)
 			}
 		}
 	case "r":
