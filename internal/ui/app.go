@@ -756,7 +756,7 @@ func (m *Model) recalcLayout() {
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	infoPanelHeight := 7
+	var infoPanelHeight int
 	switch {
 	case m.detailStackName != "":
 		infoPanelHeight = panels.StackDetailInfoPanelHeight(m.detailStackData(), m.width)
