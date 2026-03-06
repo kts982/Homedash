@@ -287,6 +287,17 @@ func TestInspectContainer(t *testing.T) {
 				}
 			],
 			"NetworkSettings": {
+				"Ports": {
+					"80/tcp": [
+						{"HostIp": "0.0.0.0", "HostPort": "8080"}
+					],
+					"443/tcp": [
+						{"HostIp": "::", "HostPort": "8443"}
+					],
+					"5432/tcp": [
+						{"HostIp": "127.0.0.1", "HostPort": "5432"}
+					]
+				},
 				"Networks": {
 					"app": {
 						"IPAddress": "172.20.0.5",
@@ -354,6 +365,14 @@ func TestInspectContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(detail.Networks, wantNetworks) {
 		t.Fatalf("networks = %#v, want %#v", detail.Networks, wantNetworks)
+	}
+	wantPublished := []PublishedPort{
+		{HostIP: "0.0.0.0", HostPort: 8080, ContainerPort: 80, Type: "tcp"},
+		{HostIP: "::", HostPort: 8443, ContainerPort: 443, Type: "tcp"},
+		{HostIP: "127.0.0.1", HostPort: 5432, ContainerPort: 5432, Type: "tcp"},
+	}
+	if !reflect.DeepEqual(detail.PublishedPorts, wantPublished) {
+		t.Fatalf("published ports = %#v, want %#v", detail.PublishedPorts, wantPublished)
 	}
 }
 

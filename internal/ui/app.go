@@ -729,7 +729,7 @@ func (m *Model) recalcLayout() {
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	infoPanelHeight := panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.width)
+	infoPanelHeight := panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width)
 	logPanel := m.height - infoPanelHeight - 1
 	if logPanel < 5 {
 		logPanel = 5
@@ -878,7 +878,7 @@ func (m Model) View() string {
 
 func (m Model) renderDetail() string {
 	detail := panels.RenderDetail(
-		m.detailContainer, m.detailMeta, m.detailLogs, m.detailLogsErr,
+		m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
 		m.confirmAction, m.actionResult,
 		m.detailScrollOffset, m.width, m.height,
 		m.logFollowing)

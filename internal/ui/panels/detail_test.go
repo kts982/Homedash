@@ -22,7 +22,7 @@ func TestRenderDetailAcceptsShortContainerID(t *testing.T) {
 		}
 	}()
 
-	view := RenderDetail(c, nil, []string{"log line"}, nil, "", "", 0, 80, 20, false)
+	view := RenderDetail(c, nil, "", []string{"log line"}, nil, "", "", 0, 80, 20, false)
 	if !strings.Contains(view, "abc") {
 		t.Fatalf("RenderDetail() output does not contain short container ID: %q", view)
 	}
@@ -46,6 +46,10 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 			{Name: "app", IPv4: "172.20.0.5"},
 			{Name: "edge", IPv4: "172.21.0.9", IPv6: "fd00::9"},
 		},
+		PublishedPorts: []collector.PublishedPort{
+			{HostIP: "0.0.0.0", HostPort: 8080, ContainerPort: 80, Type: "tcp"},
+			{HostIP: "127.0.0.1", HostPort: 5432, ContainerPort: 5432, Type: "tcp"},
+		},
 		Mounts: []collector.Mount{
 			{Source: "/host/config", Destination: "/var/lib/postgresql/data", Type: "bind", Mode: "rw"},
 		},
@@ -56,7 +60,7 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 		},
 	}
 
-	view := RenderDetail(c, meta, []string{"log line"}, nil, "", "", 0, 100, 24, false)
+	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 100, 24, false)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -64,7 +68,38 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 		"Time     start 2026-03-06 12:34Z  create 2026-03-01 08:00Z",
 		"Cmd      /docker-entrypoint.sh postgres -c shared_buffers=256MB",
 		"Addr     app 172.20.0.5  edge 172.21.0.9,fd00::9",
+		"Publish  *:8080->80/tcp, 127.0.0.1:5432->5432/tcp",
+		"URLs     http://localhost:8080  http://homedash:8080",
 		"Compose  homedash/db  v2.24",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
+func TestRenderDetailSummarizesPublishedMetadataInNarrowWidth(t *testing.T) {
+	c := &collector.Container{
+		ID:    "abc123def456",
+		Name:  "web",
+		Image: "nginx:latest",
+		State: "running",
+		Stack: "homedash",
+	}
+	meta := &collector.ContainerDetail{
+		PublishedPorts: []collector.PublishedPort{
+			{HostIP: "0.0.0.0", HostPort: 8080, ContainerPort: 80, Type: "tcp"},
+			{HostIP: "::", HostPort: 8443, ContainerPort: 443, Type: "tcp"},
+			{HostIP: "127.0.0.1", HostPort: 5432, ContainerPort: 5432, Type: "tcp"},
+		},
+	}
+
+	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 44, 20, false)
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"Publish  *:8080->80/tcp +2 more",
+		"URLs     http://localhost:8080 +3 more",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
@@ -80,7 +115,7 @@ func TestRenderDetailShowsLiveWaitingState(t *testing.T) {
 		State: "running",
 	}
 
-	view := RenderDetail(c, nil, nil, nil, "", "", 0, 90, 20, true)
+	view := RenderDetail(c, nil, "", nil, nil, "", "", 0, 90, 20, true)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -103,7 +138,7 @@ func TestRenderDetailShowsLogErrorState(t *testing.T) {
 		State: "running",
 	}
 
-	view := RenderDetail(c, nil, nil, assertErr("socket closed"), "", "", 0, 90, 20, false)
+	view := RenderDetail(c, nil, "", nil, assertErr("socket closed"), "", "", 0, 90, 20, false)
 	plain := stripANSI(view)
 
 	for _, want := range []string{

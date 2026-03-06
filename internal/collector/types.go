@@ -77,14 +77,45 @@ type NetworkAddress struct {
 	IPv6 string
 }
 
+type PublishedPort struct {
+	HostIP        string
+	HostPort      int
+	ContainerPort int
+	Type          string
+}
+
 type ContainerDetail struct {
-	Mounts        []Mount
-	Labels        map[string]string
-	RestartPolicy string
-	Command       string
-	CreatedAt     time.Time
-	StartedAt     time.Time
-	Networks      []NetworkAddress
+	Mounts         []Mount
+	Labels         map[string]string
+	RestartPolicy  string
+	Command        string
+	CreatedAt      time.Time
+	StartedAt      time.Time
+	Networks       []NetworkAddress
+	PublishedPorts []PublishedPort
+}
+
+func FormatPublishedPorts(ports []PublishedPort) string {
+	var parts []string
+	for _, p := range ports {
+		if p.HostPort <= 0 || p.ContainerPort <= 0 {
+			continue
+		}
+		host := strings.TrimSpace(p.HostIP)
+		switch host {
+		case "", "0.0.0.0", "::":
+			host = "*"
+		default:
+			if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+				host = "[" + host + "]"
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d->%d/%s", host, p.HostPort, p.ContainerPort, p.Type))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 type DockerData struct {

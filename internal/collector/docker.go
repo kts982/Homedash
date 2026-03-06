@@ -609,6 +609,10 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 			Mode        string `json:"Mode"`
 		} `json:"Mounts"`
 		NetworkSettings struct {
+			Ports map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"Ports"`
 			Networks map[string]struct {
 				IPAddress         string `json:"IPAddress"`
 				GlobalIPv6Address string `json:"GlobalIPv6Address"`
@@ -646,8 +650,62 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 			IPv6: network.GlobalIPv6Address,
 		})
 	}
+	var publishedKeys []string
+	for key := range raw.NetworkSettings.Ports {
+		publishedKeys = append(publishedKeys, key)
+	}
+	sort.Strings(publishedKeys)
+	for _, key := range publishedKeys {
+		containerPort, proto := parseDockerPortSpec(key)
+		if containerPort <= 0 || proto == "" {
+			continue
+		}
+		bindings := raw.NetworkSettings.Ports[key]
+		for _, binding := range bindings {
+			hostPort, err := strconv.Atoi(strings.TrimSpace(binding.HostPort))
+			if err != nil || hostPort <= 0 {
+				continue
+			}
+			detail.PublishedPorts = append(detail.PublishedPorts, PublishedPort{
+				HostIP:        strings.TrimSpace(binding.HostIP),
+				HostPort:      hostPort,
+				ContainerPort: containerPort,
+				Type:          proto,
+			})
+		}
+	}
+	sort.Slice(detail.PublishedPorts, func(i, j int) bool {
+		left := detail.PublishedPorts[i]
+		right := detail.PublishedPorts[j]
+		switch {
+		case left.ContainerPort != right.ContainerPort:
+			return left.ContainerPort < right.ContainerPort
+		case left.HostPort != right.HostPort:
+			return left.HostPort < right.HostPort
+		case left.Type != right.Type:
+			return left.Type < right.Type
+		default:
+			return left.HostIP < right.HostIP
+		}
+	})
 
 	return detail, nil
+}
+
+func parseDockerPortSpec(value string) (int, string) {
+	containerPortStr, proto, ok := strings.Cut(strings.TrimSpace(value), "/")
+	if !ok {
+		return 0, ""
+	}
+	containerPort, err := strconv.Atoi(containerPortStr)
+	if err != nil || containerPort <= 0 {
+		return 0, ""
+	}
+	proto = strings.TrimSpace(proto)
+	if proto == "" {
+		return 0, ""
+	}
+	return containerPort, proto
 }
 
 func formatRestartPolicy(policy string) string {
