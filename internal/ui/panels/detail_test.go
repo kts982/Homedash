@@ -152,6 +152,66 @@ func TestRenderDetailShowsLogErrorState(t *testing.T) {
 	}
 }
 
+func TestRenderStackDetailShowsSummaryAndLogs(t *testing.T) {
+	stack := &StackDetail{
+		Name:           "media",
+		ContainerCount: 3,
+		RunningCount:   2,
+		UnhealthyCount: 1,
+		StoppedCount:   1,
+		CPUPerc:        4.2,
+		MemUsed:        512 * 1024 * 1024,
+		Containers: []StackDetailContainer{
+			{Name: "db", State: "running", Image: "postgres:16", Ports: "5432->5432/tcp"},
+			{Name: "web", State: "running", Health: "unhealthy", Image: "nginx:latest", Ports: "8080->80/tcp"},
+			{Name: "worker", State: "exited", Image: "worker:latest"},
+		},
+	}
+
+	view := RenderStackDetail(stack, []string{"2026-03-06T12:00:00Z [web] ready"}, nil, "", "", 0, 120, 24, false)
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"media  stack",
+		"Status   2/3 up  1 unhealthy  1 stopped",
+		"Members  db running, web running unhealthy, worker exited",
+		"Images   postgres:16, nginx:latest, worker:latest",
+		"Ports    db 5432->5432/tcp, web 8080->80/tcp",
+		"LOGS",
+		"[web] ready",
+		"f follow",
+		"s stop",
+		"R restart",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderStackDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
+func TestRenderStackDetailShowsWaitingState(t *testing.T) {
+	stack := &StackDetail{
+		Name:           "media",
+		ContainerCount: 2,
+		RunningCount:   1,
+		StoppedCount:   1,
+	}
+
+	view := RenderStackDetail(stack, nil, nil, "", "", 0, 90, 20, true)
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"Waiting for stack log output...",
+		"Follow mode is active across running containers.",
+		"S start",
+		"s stop",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderStackDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }

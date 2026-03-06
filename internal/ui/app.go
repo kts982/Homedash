@@ -87,6 +87,7 @@ type Model struct {
 	viewMode                   ViewMode
 	detailContainer            *collector.Container
 	detailContainerID          string
+	detailStackName            string
 	detailLogs                 []string
 	detailLogsErr              error
 	detailMeta                 *collector.ContainerDetail
@@ -361,12 +362,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if m.viewMode == ViewDetail && m.detailContainerID != "" {
-			m.detailContainer = nil
-			for i := range m.dockerData.Containers {
-				if m.dockerData.Containers[i].ID == m.detailContainerID {
-					m.detailContainer = &m.dockerData.Containers[i]
-					break
+		if m.viewMode == ViewDetail {
+			if m.detailContainerID != "" {
+				m.detailContainer = nil
+				for i := range m.dockerData.Containers {
+					if m.dockerData.Containers[i].ID == m.detailContainerID {
+						m.detailContainer = &m.dockerData.Containers[i]
+						break
+					}
 				}
 			}
 			m.recalcLayout()
@@ -376,6 +379,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ContainerLogsMsg:
 		if m.viewMode == ViewDetail && msg.ContainerID == m.detailContainerID {
+			m.detailLogs = msg.Lines
+			m.detailLogsErr = msg.Err
+		}
+		return m, nil
+
+	case StackLogsMsg:
+		if m.viewMode == ViewDetail && msg.StackName == m.detailStackName {
 			m.detailLogs = msg.Lines
 			m.detailLogsErr = msg.Err
 		}
@@ -403,7 +413,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			func() tea.Msg { return collectDockerCmd() },
 			clearActionResultCmd(),
 		}
-		if m.viewMode == ViewDetail {
+		if m.viewMode == ViewDetail && m.detailContainerID != "" {
 			cmds = append(cmds, collectLogsCmd(m.detailContainerID, 50))
 		}
 		if m.viewMode == ViewDashboard {
@@ -431,6 +441,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{
 			func() tea.Msg { return collectDockerCmd() },
 			clearActionResultCmd(),
+		}
+		if m.viewMode == ViewDetail && msg.StackName == m.detailStackName {
+			cmds = append(cmds, collectStackLogsCmd(m.dockerData.Containers, msg.StackName, 50))
 		}
 		if notifCmd != nil {
 			cmds = append(cmds, notifCmd)
@@ -541,16 +554,28 @@ func (m *Model) startFollowing() tea.Cmd {
 	m.logFollowCancel = cancel
 	m.logFollowCh = ch
 
+	tail := 0
+	if m.detailLogs == nil {
+		tail = 50
+	}
+	stackName := m.detailStackName
 	containerID := m.detailContainerID
+	containers := append([]collector.Container(nil), m.dockerData.Containers...)
 
 	go func() {
 		defer close(ch)
-		_ = collector.StreamContainerLogs(ctx, containerID, 50, ch)
+		if stackName != "" {
+			_ = collector.StreamStackLogs(ctx, containers, stackName, tail, ch)
+			return
+		}
+		_ = collector.StreamContainerLogs(ctx, containerID, tail, ch)
 	}()
 
-	// Clear existing logs since the stream will provide tail + follow
-	m.detailLogs = nil
-	m.detailScrollOffset = 0
+	// If logs are not loaded yet, let the follow stream provide the initial tail.
+	if tail > 0 {
+		m.detailLogs = nil
+		m.detailScrollOffset = 0
+	}
 
 	return logFollowCmd(ch, m.logFollowSeq)
 }
@@ -586,7 +611,9 @@ func quickMenuItems(state string) []quickMenuItem {
 }
 
 func stackQuickMenuItems(running, stopped int) []quickMenuItem {
-	var items []quickMenuItem
+	items := []quickMenuItem{
+		{"View Stack Logs", "enter", "logs"},
+	}
 	if stopped > 0 {
 		items = append(items, quickMenuItem{"Start Stack", "S", "start"})
 	}
@@ -729,7 +756,13 @@ func (m *Model) recalcLayout() {
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	infoPanelHeight := panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width)
+	infoPanelHeight := 7
+	switch {
+	case m.detailStackName != "":
+		infoPanelHeight = panels.StackDetailInfoPanelHeight(m.detailStackData(), m.width)
+	default:
+		infoPanelHeight = panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width)
+	}
 	logPanel := m.height - infoPanelHeight - 1
 	if logPanel < 5 {
 		logPanel = 5
@@ -877,11 +910,21 @@ func (m Model) View() string {
 }
 
 func (m Model) renderDetail() string {
-	detail := panels.RenderDetail(
-		m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
-		m.confirmAction, m.actionResult,
-		m.detailScrollOffset, m.width, m.height,
-		m.logFollowing)
+	var detail string
+	if stack := m.detailStackData(); stack != nil {
+		detail = panels.RenderStackDetail(
+			stack,
+			m.detailLogs, m.detailLogsErr,
+			m.confirmAction, m.actionResult,
+			m.detailScrollOffset, m.width, m.height,
+			m.logFollowing)
+	} else {
+		detail = panels.RenderDetail(
+			m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
+			m.confirmAction, m.actionResult,
+			m.detailScrollOffset, m.width, m.height,
+			m.logFollowing)
+	}
 	return lipgloss.NewStyle().
 		Background(styles.BgBase).
 		Width(m.width).
@@ -1035,16 +1078,7 @@ func (m Model) selectedStackPreview() *panels.StackPreview {
 		return nil
 	}
 
-	return &panels.StackPreview{
-		Name:           item.StackName,
-		ContainerCount: item.ContainerCount,
-		RunningCount:   item.RunningCount,
-		UnhealthyCount: item.UnhealthyCount,
-		StartingCount:  item.StartingCount,
-		StoppedCount:   item.StoppedCount,
-		CPUPerc:        item.CPUPercTotal,
-		MemUsed:        item.MemUsedTotal,
-	}
+	return m.stackPreviewByName(item.StackName)
 }
 
 func (m Model) quickMenuStackPreview() *panels.StackPreview {
@@ -1052,28 +1086,101 @@ func (m Model) quickMenuStackPreview() *panels.StackPreview {
 		return nil
 	}
 
-	for _, item := range m.displayItems {
-		if item.Kind == DisplayGroup && item.StackName == m.quickMenuStackName {
-			return &panels.StackPreview{
-				Name:           item.StackName,
-				ContainerCount: item.ContainerCount,
-				RunningCount:   item.RunningCount,
-				UnhealthyCount: item.UnhealthyCount,
-				StartingCount:  item.StartingCount,
-				StoppedCount:   item.StoppedCount,
-				CPUPerc:        item.CPUPercTotal,
-				MemUsed:        item.MemUsedTotal,
-			}
-		}
-	}
-
-	return nil
+	return m.stackPreviewByName(m.quickMenuStackName)
 }
 
 func (m *Model) clearDashboardAction() {
 	m.dashboardActionContainerID = ""
 	m.dashboardActionStackName = ""
 	m.dashboardActionTargetName = ""
+}
+
+func (m *Model) clearDetailView() {
+	m.stopFollowing()
+	m.viewMode = ViewDashboard
+	m.detailContainer = nil
+	m.detailContainerID = ""
+	m.detailStackName = ""
+	m.detailLogs = nil
+	m.detailLogsErr = nil
+	m.detailMeta = nil
+	m.detailMetaErr = nil
+	m.detailScrollOffset = 0
+	m.confirmAction = ""
+	m.actionResult = ""
+}
+
+func (m Model) stackPreviewByName(stackName string) *panels.StackPreview {
+	stackName = strings.TrimSpace(stackName)
+	if stackName == "" {
+		return nil
+	}
+
+	preview := &panels.StackPreview{Name: stackName}
+	for _, c := range m.dockerData.Containers {
+		if c.Stack != stackName {
+			continue
+		}
+		preview.ContainerCount++
+		if c.State == "running" {
+			preview.RunningCount++
+		} else {
+			preview.StoppedCount++
+		}
+		switch c.Health {
+		case "unhealthy":
+			preview.UnhealthyCount++
+		case "starting":
+			preview.StartingCount++
+		}
+		preview.CPUPerc += c.CPUPerc
+		preview.MemUsed += c.MemUsed
+	}
+	return preview
+}
+
+func (m Model) detailStackData() *panels.StackDetail {
+	if m.detailStackName == "" {
+		return nil
+	}
+
+	preview := m.stackPreviewByName(m.detailStackName)
+	if preview == nil {
+		return nil
+	}
+
+	detail := &panels.StackDetail{
+		Name:           preview.Name,
+		ContainerCount: preview.ContainerCount,
+		RunningCount:   preview.RunningCount,
+		UnhealthyCount: preview.UnhealthyCount,
+		StartingCount:  preview.StartingCount,
+		StoppedCount:   preview.StoppedCount,
+		CPUPerc:        preview.CPUPerc,
+		MemUsed:        preview.MemUsed,
+	}
+
+	for _, c := range m.dockerData.Containers {
+		if c.Stack != m.detailStackName {
+			continue
+		}
+		health := c.Health
+		if health == "" {
+			health = "-"
+		}
+		detail.Containers = append(detail.Containers, panels.StackDetailContainer{
+			Name:   c.Name,
+			State:  c.State,
+			Health: health,
+			Image:  c.Image,
+			Ports:  collector.FormatPorts(c.Ports),
+		})
+	}
+	sort.Slice(detail.Containers, func(i, j int) bool {
+		return detail.Containers[i].Name < detail.Containers[j].Name
+	})
+
+	return detail
 }
 
 func summarizeStackActionTargets(names []string, limit int) string {

@@ -464,17 +464,20 @@ func TestQuickMenuItemsStopped(t *testing.T) {
 func TestStackQuickMenuItemsMixed(t *testing.T) {
 	items := stackQuickMenuItems(2, 1)
 
-	if len(items) != 3 {
-		t.Fatalf("len(items) = %d, want 3", len(items))
+	if len(items) != 4 {
+		t.Fatalf("len(items) = %d, want 4", len(items))
 	}
-	if items[0].action != "start" {
-		t.Fatalf("items[0].action = %q, want %q", items[0].action, "start")
+	if items[0].action != "logs" {
+		t.Fatalf("items[0].action = %q, want %q", items[0].action, "logs")
 	}
-	if items[1].action != "stop" {
-		t.Fatalf("items[1].action = %q, want %q", items[1].action, "stop")
+	if items[1].action != "start" {
+		t.Fatalf("items[1].action = %q, want %q", items[1].action, "start")
 	}
-	if items[2].action != "restart" {
-		t.Fatalf("items[2].action = %q, want %q", items[2].action, "restart")
+	if items[2].action != "stop" {
+		t.Fatalf("items[2].action = %q, want %q", items[2].action, "stop")
+	}
+	if items[3].action != "restart" {
+		t.Fatalf("items[3].action = %q, want %q", items[3].action, "restart")
 	}
 }
 
@@ -536,6 +539,78 @@ func TestHandleDashboardKeySetsStackConfirmAction(t *testing.T) {
 	}
 	if updated.dashboardActionContainerID != "" {
 		t.Fatalf("dashboardActionContainerID = %q, want empty for stack action", updated.dashboardActionContainerID)
+	}
+}
+
+func TestExecuteQuickMenuItemLogsOpensStackDetail(t *testing.T) {
+	m := newTestModel()
+	m.quickMenuOpen = true
+	m.quickMenuStackName = "media"
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "web", Name: "web", Stack: "media", State: "running"},
+		},
+	}
+
+	updatedModel, cmd := m.executeQuickMenuItem(quickMenuItem{
+		label:  "View Stack Logs",
+		key:    "enter",
+		action: "logs",
+	})
+	updated := updatedModel.(*Model)
+
+	if updated.viewMode != ViewDetail {
+		t.Fatalf("viewMode = %d, want %d", updated.viewMode, ViewDetail)
+	}
+	if updated.detailStackName != "media" {
+		t.Fatalf("detailStackName = %q, want %q", updated.detailStackName, "media")
+	}
+	if updated.detailContainerID != "" {
+		t.Fatalf("detailContainerID = %q, want empty", updated.detailContainerID)
+	}
+	if updated.quickMenuOpen {
+		t.Fatal("quickMenuOpen = true, want false after opening stack detail")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want stack log fetch command")
+	}
+}
+
+func TestHandleDetailKeySetsStackConfirmAction(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailStackName = "media"
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "web", Name: "web", Stack: "media", State: "running"},
+			{ID: "worker", Name: "worker", Stack: "media", State: "exited"},
+		},
+	}
+
+	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.confirmAction != "stop" {
+		t.Fatalf("confirmAction = %q, want %q", updated.confirmAction, "stop")
+	}
+}
+
+func TestUpdateStackLogsMsgUpdatesMatchingStackDetail(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailStackName = "media"
+
+	updatedModel, _ := m.Update(StackLogsMsg{
+		StackName: "media",
+		Lines:     []string{"2026-03-06T12:00:00Z [web] ready"},
+	})
+	updated := updatedModel.(Model)
+
+	if len(updated.detailLogs) != 1 {
+		t.Fatalf("len(detailLogs) = %d, want 1", len(updated.detailLogs))
+	}
+	if got, want := updated.detailLogs[0], "2026-03-06T12:00:00Z [web] ready"; got != want {
+		t.Fatalf("detailLogs[0] = %q, want %q", got, want)
 	}
 }
 

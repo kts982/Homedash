@@ -27,6 +27,9 @@ const maxStatsResponseSize = 1 * 1024 * 1024 // 1MB
 // maxLogFrameSize limits individual Docker log stream frames.
 const maxLogFrameSize = 1 * 1024 * 1024 // 1MB
 
+// maxMergedLogLines keeps stack log views bounded when many containers contribute tail lines.
+const maxMergedLogLines = 1000
+
 var dockerHost = defaultDockerHost
 
 var dockerClient = newDockerClient(10 * time.Second)
@@ -566,6 +569,238 @@ func StreamContainerLogs(ctx context.Context, containerID string, tail int, line
 			return nil
 		}
 	}
+}
+
+type stackLogTarget struct {
+	ID   string
+	Name string
+}
+
+type stackLogEntry struct {
+	line         string
+	timestamp    time.Time
+	hasTimestamp bool
+	order        int
+}
+
+func FetchStackLogs(containers []Container, stackName string, tail int) ([]string, error) {
+	targets := stackLogTargets(containers, stackName)
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	type fetchResult struct {
+		target stackLogTarget
+		lines  []string
+		err    error
+	}
+
+	results := make(chan fetchResult, len(targets))
+	for _, target := range targets {
+		go func(target stackLogTarget) {
+			lines, err := FetchContainerLogs(target.ID, tail)
+			results <- fetchResult{
+				target: target,
+				lines:  lines,
+				err:    err,
+			}
+		}(target)
+	}
+
+	var (
+		entries  []stackLogEntry
+		failures []string
+		order    int
+	)
+	for range targets {
+		result := <-results
+		if result.err != nil {
+			failures = append(failures, result.target.Name)
+			continue
+		}
+		for _, line := range result.lines {
+			prefixed := prefixStackLogLine(result.target.Name, line)
+			ts, ok := parseDockerLogTimestamp(prefixed)
+			entries = append(entries, stackLogEntry{
+				line:         prefixed,
+				timestamp:    ts,
+				hasTimestamp: ok,
+				order:        order,
+			})
+			order++
+		}
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		switch {
+		case left.hasTimestamp && right.hasTimestamp:
+			if !left.timestamp.Equal(right.timestamp) {
+				return left.timestamp.Before(right.timestamp)
+			}
+		case left.hasTimestamp != right.hasTimestamp:
+			return left.hasTimestamp
+		}
+		return left.order < right.order
+	})
+
+	if len(entries) > maxMergedLogLines {
+		entries = entries[len(entries)-maxMergedLogLines:]
+	}
+
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, entry.line)
+	}
+
+	if len(lines) == 0 && len(failures) > 0 {
+		return nil, fmt.Errorf("docker stack logs: failed for %s", strings.Join(failures, ", "))
+	}
+	return lines, nil
+}
+
+func StreamStackLogs(ctx context.Context, containers []Container, stackName string, tail int, lineCh chan<- string) error {
+	targets := stackLogTargets(containers, stackName)
+	if len(targets) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, len(targets))
+	var wg sync.WaitGroup
+
+	for _, target := range targets {
+		wg.Add(1)
+		go func(target stackLogTarget) {
+			defer wg.Done()
+
+			containerCh := make(chan string, 64)
+			streamDone := make(chan error, 1)
+			go func() {
+				streamDone <- StreamContainerLogs(ctx, target.ID, tail, containerCh)
+				close(containerCh)
+			}()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case line, ok := <-containerCh:
+					if !ok {
+						if err := <-streamDone; err != nil && ctx.Err() == nil {
+							select {
+							case errCh <- fmt.Errorf("%s: %w", target.Name, err):
+							default:
+							}
+							cancel()
+						}
+						return
+					}
+					select {
+					case lineCh <- prefixStackLogLine(target.Name, line):
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}(target)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		<-done
+		if len(errCh) > 0 {
+			close(errCh)
+			var failures []string
+			for err := range errCh {
+				failures = append(failures, err.Error())
+			}
+			if len(failures) > 0 {
+				return fmt.Errorf("docker stack stream logs: %s", strings.Join(failures, "; "))
+			}
+		}
+		return nil
+	case <-done:
+		close(errCh)
+		var failures []string
+		for err := range errCh {
+			failures = append(failures, err.Error())
+		}
+		if len(failures) > 0 {
+			return fmt.Errorf("docker stack stream logs: %s", strings.Join(failures, "; "))
+		}
+		return nil
+	}
+}
+
+func stackLogTargets(containers []Container, stackName string) []stackLogTarget {
+	var targets []stackLogTarget
+	for _, c := range containers {
+		if c.Stack != stackName {
+			continue
+		}
+		targets = append(targets, stackLogTarget{
+			ID:   c.ID,
+			Name: c.Name,
+		})
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].Name != targets[j].Name {
+			return targets[i].Name < targets[j].Name
+		}
+		return targets[i].ID < targets[j].ID
+	})
+	return targets
+}
+
+func prefixStackLogLine(containerName, line string) string {
+	containerName = strings.TrimSpace(containerName)
+	if containerName == "" {
+		return line
+	}
+	if ts, rest, ok := splitDockerTimestampPrefix(line); ok {
+		if rest == "" {
+			return fmt.Sprintf("%s [%s]", ts, containerName)
+		}
+		return fmt.Sprintf("%s [%s] %s", ts, containerName, rest)
+	}
+	return fmt.Sprintf("[%s] %s", containerName, line)
+}
+
+func parseDockerLogTimestamp(line string) (time.Time, bool) {
+	ts, _, ok := splitDockerTimestampPrefix(line)
+	if !ok {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func splitDockerTimestampPrefix(line string) (string, string, bool) {
+	if len(line) <= len("2006-01-02T15:04:05Z") || line[4] != '-' || line[7] != '-' || line[10] != 'T' {
+		return "", "", false
+	}
+	spaceIdx := strings.IndexByte(line, ' ')
+	if spaceIdx <= 19 {
+		return "", "", false
+	}
+	ts := line[:spaceIdx]
+	if _, err := time.Parse(time.RFC3339Nano, ts); err != nil {
+		return "", "", false
+	}
+	return ts, line[spaceIdx+1:], true
 }
 
 func InspectContainer(containerID string) (ContainerDetail, error) {

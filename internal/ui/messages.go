@@ -30,6 +30,13 @@ type ContainerLogsMsg struct {
 	Err         error
 }
 
+// StackLogsMsg carries fetched stack logs.
+type StackLogsMsg struct {
+	StackName string
+	Lines     []string
+	Err       error
+}
+
 // ContainerActionMsg carries the result of a container action.
 type ContainerActionMsg struct {
 	ContainerID string

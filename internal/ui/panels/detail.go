@@ -529,8 +529,8 @@ func formatLogLine(line string, maxWidth int) string {
 
 	var ts, msg string
 
-	// Docker timestamps: 2024-03-03T12:00:01.123456789Z <message>
-	if len(line) > 30 && line[4] == '-' && line[7] == '-' && line[10] == 'T' {
+	// Docker timestamps: 2024-03-03T12:00:01Z <message> or RFC3339Nano variants.
+	if len(line) > len("2006-01-02T15:04:05Z") && line[4] == '-' && line[7] == '-' && line[10] == 'T' {
 		if spaceIdx := strings.IndexByte(line, ' '); spaceIdx > 19 {
 			if t, err := time.Parse(time.RFC3339Nano, line[:spaceIdx]); err == nil {
 				ts = t.Format("15:04:05")
@@ -544,20 +544,61 @@ func formatLogLine(line string, maxWidth int) string {
 		msg = line
 	}
 
+	source := ""
+	if prefixedSource, rest, ok := splitLogSourcePrefix(msg); ok {
+		source = prefixedSource
+		msg = rest
+	}
+
 	// Detect log level and pick color for the message
 	levelColor := detectLogLevel(msg)
 	if levelColor != "" {
 		msgStyle = lipgloss.NewStyle().Foreground(levelColor)
 	}
 
+	msgRendered := msgStyle.Render(msg)
+	if source != "" {
+		sourceStyle := lipgloss.NewStyle().Foreground(stackLogSourceColor(source)).Bold(true)
+		if msg == "" {
+			msgRendered = sourceStyle.Render("[" + source + "]")
+		} else {
+			msgRendered = sourceStyle.Render("["+source+"]") + " " + msgRendered
+		}
+	}
+
 	var rendered string
 	if ts != "" {
-		rendered = timeStyle.Render(ts) + " " + msgStyle.Render(msg)
+		rendered = timeStyle.Render(ts) + " " + msgRendered
 	} else {
-		rendered = msgStyle.Render(msg)
+		rendered = msgRendered
 	}
 
 	return lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+}
+
+func splitLogSourcePrefix(msg string) (string, string, bool) {
+	if !strings.HasPrefix(msg, "[") {
+		return "", "", false
+	}
+	endIdx := strings.Index(msg, "] ")
+	if endIdx <= 1 {
+		return "", "", false
+	}
+	return msg[1:endIdx], msg[endIdx+2:], true
+}
+
+func stackLogSourceColor(name string) lipgloss.Color {
+	palette := []lipgloss.Color{
+		styles.Primary,
+		styles.Secondary,
+		styles.Success,
+		styles.Warning,
+	}
+	var sum int
+	for _, r := range name {
+		sum += int(r)
+	}
+	return palette[sum%len(palette)]
 }
 
 type detailLogState int
