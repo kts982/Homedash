@@ -412,17 +412,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case StackActionMsg:
+		var notifCmd tea.Cmd
 		switch {
 		case msg.Attempted == 0:
 			m.actionResult = fmt.Sprintf("Nothing to %s in stack %s", msg.Action, msg.StackName)
 		case msg.Err != nil:
-			m.actionResult = fmt.Sprintf(
-				"Error: %s stack %s (%d/%d failed)",
-				msg.Action,
-				msg.StackName,
-				len(msg.Failed),
-				msg.Attempted,
-			)
+			m.actionResult = formatStackActionFailureResult(msg)
+			notifCmd = m.pushNotify(formatStackActionFailureNotification(msg), levelError)
 		default:
 			m.actionResult = fmt.Sprintf(
 				"Success: %s stack %s (%d containers)",
@@ -432,10 +428,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 		m.clearDashboardAction()
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			func() tea.Msg { return collectDockerCmd() },
 			clearActionResultCmd(),
-		)
+		}
+		if notifCmd != nil {
+			cmds = append(cmds, notifCmd)
+		}
+		return m, tea.Batch(cmds...)
 
 	case ClearActionResultMsg:
 		m.actionResult = ""
@@ -1074,6 +1074,32 @@ func (m *Model) clearDashboardAction() {
 	m.dashboardActionContainerID = ""
 	m.dashboardActionStackName = ""
 	m.dashboardActionTargetName = ""
+}
+
+func summarizeStackActionTargets(names []string, limit int) string {
+	if len(names) == 0 || limit <= 0 {
+		return ""
+	}
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s +%d more", strings.Join(names[:limit], ", "), len(names)-limit)
+}
+
+func formatStackActionFailureResult(msg StackActionMsg) string {
+	targets := summarizeStackActionTargets(msg.Failed, 3)
+	if targets == "" {
+		return fmt.Sprintf("Error: %s stack %s failed", msg.Action, msg.StackName)
+	}
+	return fmt.Sprintf("Error: %s stack %s failed for %s", msg.Action, msg.StackName, targets)
+}
+
+func formatStackActionFailureNotification(msg StackActionMsg) string {
+	targets := summarizeStackActionTargets(msg.Failed, 4)
+	if targets == "" {
+		return fmt.Sprintf("Stack %s %s failed", msg.StackName, msg.Action)
+	}
+	return fmt.Sprintf("Stack %s %s failed for %s", msg.StackName, msg.Action, targets)
 }
 
 func renderedLineCount(s string) int {

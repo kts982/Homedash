@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -561,6 +562,54 @@ func TestUpdateStackActionMsgClearsPendingDashboardAction(t *testing.T) {
 	}
 	if !strings.Contains(updated.actionResult, "Success: restart stack media (2 containers)") {
 		t.Fatalf("actionResult = %q, want success stack summary", updated.actionResult)
+	}
+	if updated.notifications.current() != nil {
+		t.Fatalf("notification = %#v, want nil on stack action success", updated.notifications.current())
+	}
+}
+
+func TestUpdateStackActionMsgIncludesFailedContainerNames(t *testing.T) {
+	m := newTestModel()
+
+	updatedModel, _ := m.Update(StackActionMsg{
+		StackName: "media",
+		Action:    "restart",
+		Attempted: 5,
+		Failed:    []string{"web", "db", "worker", "cache"},
+		Err:       errors.New("boom"),
+	})
+	updated := updatedModel.(Model)
+
+	if got, want := updated.actionResult, "Error: restart stack media failed for web, db, worker +1 more"; got != want {
+		t.Fatalf("actionResult = %q, want %q", got, want)
+	}
+	n := updated.notifications.current()
+	if n == nil {
+		t.Fatal("notification = nil, want failure notification")
+	}
+	if got, want := n.Message, "Stack media restart failed for web, db, worker, cache"; got != want {
+		t.Fatalf("notification message = %q, want %q", got, want)
+	}
+	if n.Level != levelError {
+		t.Fatalf("notification level = %d, want %d", n.Level, levelError)
+	}
+}
+
+func TestUpdateStackActionMsgNoopStaysCompact(t *testing.T) {
+	m := newTestModel()
+
+	updatedModel, _ := m.Update(StackActionMsg{
+		StackName: "media",
+		Action:    "start",
+		Attempted: 0,
+	})
+	updated := updatedModel.(Model)
+
+	if got, want := updated.actionResult, "Nothing to start in stack media"; got != want {
+		t.Fatalf("actionResult = %q, want %q", got, want)
+	}
+	if updated.notifications.current() != nil {
+		t.Fatalf("notification = %#v, want nil on noop stack action", updated.notifications.current())
 	}
 }
 
