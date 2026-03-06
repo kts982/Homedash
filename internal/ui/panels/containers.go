@@ -16,8 +16,17 @@ type ContainerDisplayItem struct {
 	StackName      string
 	ContainerCount int
 	RunningCount   int
+	UnhealthyCount int
+	StartingCount  int
+	StoppedCount   int
 	Collapsed      bool
 	Container      *collector.Container
+}
+
+type stackSummarySegment struct {
+	text        string
+	compactText string
+	style       lipgloss.Style
 }
 
 func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool) string {
@@ -74,7 +83,16 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 		item := items[i]
 		var row string
 		if item.IsGroup {
-			row = formatGroupHeader(item.StackName, item.RunningCount, item.ContainerCount, item.Collapsed, innerWidth)
+			row = formatGroupHeader(
+				item.StackName,
+				item.RunningCount,
+				item.ContainerCount,
+				item.UnhealthyCount,
+				item.StartingCount,
+				item.StoppedCount,
+				item.Collapsed,
+				innerWidth,
+			)
 		} else if item.Container != nil {
 			row = "  " + formatContainerRow(*item.Container, nameW-2, stackW, statusW, healthW, cpuW, memW, innerWidth-2, showStack, showHealth)
 		}
@@ -109,16 +127,122 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 	return components.Panel("CONTAINERS"+titleExtra, content, width, visibleRows+4, focused)
 }
 
-func formatGroupHeader(name string, running, total int, collapsed bool, width int) string {
+func formatGroupHeader(name string, running, total, unhealthy, starting, stopped int, collapsed bool, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
 	arrow := "▼"
 	if collapsed {
 		arrow = "▶"
 	}
-	label := fmt.Sprintf("%s %s (%d/%d running)", arrow, name, running, total)
-	return lipgloss.NewStyle().
-		Foreground(styles.Secondary).
-		Bold(true).
-		Render(label)
+
+	arrowStyle := lipgloss.NewStyle().Foreground(styles.Secondary).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(styles.Secondary).Bold(true)
+
+	summarySegments := buildStackSummarySegments(running, total, unhealthy, starting, stopped)
+	summarySegments = fitStackSummarySegments(summarySegments, width-lipgloss.Width(arrow)-1)
+
+	line := arrowStyle.Render(arrow) + " "
+	if len(summarySegments) == 0 {
+		return line + nameStyle.Render(truncate(name, width-2))
+	}
+
+	summary := renderStackSummarySegments(summarySegments)
+	summaryWidth := stackSummaryWidth(summarySegments)
+	nameWidth := width - lipgloss.Width(arrow) - 1 - 2 - summaryWidth
+	if nameWidth < 1 {
+		nameWidth = 1
+	}
+
+	line += nameStyle.Render(truncate(name, nameWidth))
+	if summary != "" {
+		line += strings.Repeat(" ", 2) + summary
+	}
+
+	return truncate(line, width)
+}
+
+func buildStackSummarySegments(running, total, unhealthy, starting, stopped int) []stackSummarySegment {
+	segments := []stackSummarySegment{
+		{
+			text:        fmt.Sprintf("%d/%d up", running, total),
+			compactText: fmt.Sprintf("%d/%d", running, total),
+			style:       lipgloss.NewStyle().Foreground(styles.TextSecondary).Bold(true),
+		},
+	}
+	if unhealthy > 0 {
+		segments = append(segments, stackSummarySegment{
+			text:  fmt.Sprintf("%d unhealthy", unhealthy),
+			style: lipgloss.NewStyle().Foreground(styles.Error).Bold(true),
+		})
+	}
+	if starting > 0 {
+		segments = append(segments, stackSummarySegment{
+			text:  fmt.Sprintf("%d starting", starting),
+			style: lipgloss.NewStyle().Foreground(styles.Warning).Bold(true),
+		})
+	}
+	if stopped > 0 {
+		segments = append(segments, stackSummarySegment{
+			text:  fmt.Sprintf("%d stopped", stopped),
+			style: lipgloss.NewStyle().Foreground(styles.TextMuted).Bold(true),
+		})
+	}
+	return segments
+}
+
+func fitStackSummarySegments(segments []stackSummarySegment, width int) []stackSummarySegment {
+	if len(segments) == 0 || width <= 0 {
+		return nil
+	}
+
+	fitted := append([]stackSummarySegment(nil), segments...)
+	minNameWidth := 8
+	if width < minNameWidth {
+		minNameWidth = width
+	}
+
+	for len(fitted) > 1 && width-stackSummaryWidth(fitted)-2 < minNameWidth {
+		fitted = fitted[:len(fitted)-1]
+	}
+
+	if width-stackSummaryWidth(fitted)-2 < minNameWidth && fitted[0].compactText != "" {
+		fitted[0].text = fitted[0].compactText
+	}
+
+	if width-stackSummaryWidth(fitted)-2 < minNameWidth {
+		return nil
+	}
+
+	return fitted
+}
+
+func stackSummaryWidth(segments []stackSummarySegment) int {
+	if len(segments) == 0 {
+		return 0
+	}
+
+	width := 0
+	for i, segment := range segments {
+		if i > 0 {
+			width += 2
+		}
+		width += lipgloss.Width(segment.text)
+	}
+	return width
+}
+
+func renderStackSummarySegments(segments []stackSummarySegment) string {
+	if len(segments) == 0 {
+		return ""
+	}
+
+	rendered := make([]string, len(segments))
+	for i, segment := range segments {
+		rendered[i] = segment.style.Render(segment.text)
+	}
+	return strings.Join(rendered, "  ")
 }
 
 func formatContainerRow(c collector.Container, nameW, stackW, statusW, healthW, cpuW, memW, maxWidth int, showStack, showHealth bool) string {
@@ -183,6 +307,9 @@ func lpad(s string, w int) string {
 }
 
 func truncate(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}

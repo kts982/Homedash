@@ -407,18 +407,28 @@ func TestRunningCount(t *testing.T) {
 	m := newTestModel()
 	m.dockerData = collector.DockerData{
 		Containers: []collector.Container{
-			{Name: "web", Stack: "app", State: "running"},
+			{Name: "web", Stack: "app", State: "running", Health: "healthy"},
 			{Name: "worker", Stack: "app", State: "exited"},
-			{Name: "db", Stack: "app", State: "running"},
+			{Name: "db", Stack: "app", State: "running", Health: "unhealthy"},
+			{Name: "migrator", Stack: "app", State: "running", Health: "starting"},
 		},
 	}
 
 	m.rebuildDisplayItems()
 
-	if m.displayItems[0].RunningCount != 2 {
-		t.Fatalf("RunningCount = %d, want 2", m.displayItems[0].RunningCount)
+	if m.displayItems[0].RunningCount != 3 {
+		t.Fatalf("RunningCount = %d, want 3", m.displayItems[0].RunningCount)
 	}
-	if m.displayItems[0].ContainerCount != 3 {
-		t.Fatalf("ContainerCount = %d, want 3", m.displayItems[0].ContainerCount)
+	if m.displayItems[0].ContainerCount != 4 {
+		t.Fatalf("ContainerCount = %d, want 4", m.displayItems[0].ContainerCount)
+	}
+	if m.displayItems[0].UnhealthyCount != 1 {
+		t.Fatalf("UnhealthyCount = %d, want 1", m.displayItems[0].UnhealthyCount)
+	}
+	if m.displayItems[0].StartingCount != 1 {
+		t.Fatalf("StartingCount = %d, want 1", m.displayItems[0].StartingCount)
+	}
+	if m.displayItems[0].StoppedCount != 1 {
+		t.Fatalf("StoppedCount = %d, want 1", m.displayItems[0].StoppedCount)
 	}
 }
