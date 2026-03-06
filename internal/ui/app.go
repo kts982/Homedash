@@ -729,32 +729,7 @@ func (m *Model) recalcLayout() {
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	// Detail view: dynamic info panel height
-	infoLines := 4 // base: Image, Stack/Health, Ports, ID
-	if m.detailContainer != nil && m.detailContainer.State == "running" {
-		infoLines++ // Net row
-	}
-	if m.detailMeta != nil {
-		if len(m.detailMeta.Mounts) > 0 {
-			infoLines++
-		}
-		composeKeys := []string{
-			"com.docker.compose.project",
-			"com.docker.compose.service",
-			"com.docker.compose.version",
-		}
-		hasComposeLabels := false
-		for _, key := range composeKeys {
-			if _, ok := m.detailMeta.Labels[key]; ok {
-				hasComposeLabels = true
-				break
-			}
-		}
-		if hasComposeLabels {
-			infoLines++
-		}
-	}
-	infoPanelHeight := infoLines + 3 // border(2) + title(1)
+	infoPanelHeight := panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.width)
 	logPanel := m.height - infoPanelHeight - 1
 	if logPanel < 5 {
 		logPanel = 5

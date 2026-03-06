@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -587,15 +588,32 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 	}
 
 	var raw struct {
-		Config struct {
+		Created string   `json:"Created"`
+		Path    string   `json:"Path"`
+		Args    []string `json:"Args"`
+		Config  struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
+		State struct {
+			StartedAt string `json:"StartedAt"`
+		} `json:"State"`
+		HostConfig struct {
+			RestartPolicy struct {
+				Name string `json:"Name"`
+			} `json:"RestartPolicy"`
+		} `json:"HostConfig"`
 		Mounts []struct {
 			Type        string `json:"Type"`
 			Source      string `json:"Source"`
 			Destination string `json:"Destination"`
 			Mode        string `json:"Mode"`
 		} `json:"Mounts"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress         string `json:"IPAddress"`
+				GlobalIPv6Address string `json:"GlobalIPv6Address"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
 	}
 
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -603,6 +621,10 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 	}
 
 	detail.Labels = raw.Config.Labels
+	detail.RestartPolicy = formatRestartPolicy(raw.HostConfig.RestartPolicy.Name)
+	detail.Command = formatContainerCommand(raw.Path, raw.Args)
+	detail.CreatedAt = parseDockerTimestamp(raw.Created)
+	detail.StartedAt = parseDockerTimestamp(raw.State.StartedAt)
 	for _, m := range raw.Mounts {
 		detail.Mounts = append(detail.Mounts, Mount{
 			Source:      m.Source,
@@ -611,8 +633,67 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 			Type:        m.Type,
 		})
 	}
+	var networkNames []string
+	for name := range raw.NetworkSettings.Networks {
+		networkNames = append(networkNames, name)
+	}
+	sort.Strings(networkNames)
+	for _, name := range networkNames {
+		network := raw.NetworkSettings.Networks[name]
+		detail.Networks = append(detail.Networks, NetworkAddress{
+			Name: name,
+			IPv4: network.IPAddress,
+			IPv6: network.GlobalIPv6Address,
+		})
+	}
 
 	return detail, nil
+}
+
+func formatRestartPolicy(policy string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return "-"
+	}
+	return policy
+}
+
+func formatContainerCommand(path string, args []string) string {
+	var parts []string
+	if trimmed := strings.TrimSpace(path); trimmed != "" {
+		parts = append(parts, shellQuote(trimmed))
+	}
+	for _, arg := range args {
+		if trimmed := strings.TrimSpace(arg); trimmed != "" {
+			parts = append(parts, shellQuote(trimmed))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if strings.ContainsAny(s, " \t\n\"'") {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+func parseDockerTimestamp(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "0001-01-01T00:00:00") {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func ContainerAction(containerID, action string) error {

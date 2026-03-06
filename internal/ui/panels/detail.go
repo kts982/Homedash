@@ -18,6 +18,189 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+const detailLabelWidth = 8
+
+// DetailInfoPanelHeight returns the rendered info panel height for the detail view.
+func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, width int) int {
+	if c == nil {
+		return 7 // 4 baseline rows + border/title chrome
+	}
+	innerWidth := width - 4
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	return len(detailInfoLines(c, meta, innerWidth)) + 3
+}
+
+func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, innerWidth int) []string {
+	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
+	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
+
+	healthColor := styles.TextMuted
+	healthText := c.Health
+	if healthText == "" {
+		healthText = "-"
+	}
+	switch c.Health {
+	case "healthy":
+		healthColor = styles.Success
+	case "unhealthy":
+		healthColor = styles.Error
+	case "starting":
+		healthColor = styles.Warning
+	}
+	healthStyled := lipgloss.NewStyle().Foreground(healthColor).Render(healthText)
+
+	stackVal := c.Stack
+	if stackVal == "" {
+		stackVal = "-"
+	}
+
+	infoLines := []string{
+		formatDetailLine(labelStyle, valueStyle, "Image", c.Image, innerWidth),
+		formatStackHealthLine(labelStyle, valueStyle, stackVal, healthStyled, innerWidth),
+		formatDetailLine(labelStyle, valueStyle, "Ports", collector.FormatPorts(c.Ports), innerWidth),
+	}
+
+	if meta != nil {
+		if meta.RestartPolicy != "" && meta.RestartPolicy != "-" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Policy", meta.RestartPolicy, innerWidth))
+		}
+		if timeLine := detailTimeLine(meta); timeLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Time", timeLine, innerWidth))
+		}
+		if meta.Command != "" && meta.Command != "-" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Cmd", meta.Command, innerWidth))
+		}
+		if addrLine := detailAddressLine(meta.Networks); addrLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Addr", addrLine, innerWidth))
+		}
+	}
+
+	containerID := c.ID
+	if len(containerID) > 12 {
+		containerID = containerID[:12]
+	}
+	infoLines = append(infoLines, formatDetailLine(labelStyle, valueStyle, "ID", containerID, innerWidth))
+
+	if c.State == "running" {
+		netStr := collector.FormatBytes(c.NetRx) + " rx / " + collector.FormatBytes(c.NetTx) + " tx"
+		infoLines = append(infoLines, formatDetailLine(labelStyle, valueStyle, "Net", netStr, innerWidth))
+	}
+
+	if meta != nil {
+		if len(meta.Mounts) > 0 {
+			var volParts []string
+			for _, mt := range meta.Mounts {
+				src := mt.Source
+				if len(src) > 25 {
+					src = "..." + src[len(src)-22:]
+				}
+				volParts = append(volParts, src+" → "+mt.Destination)
+			}
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Vols", strings.Join(volParts, ", "), innerWidth))
+		}
+		if composeLine := detailComposeLine(meta.Labels); composeLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Compose", composeLine, innerWidth))
+		}
+	}
+
+	return infoLines
+}
+
+func formatDetailLine(labelStyle, valueStyle lipgloss.Style, label, value string, innerWidth int) string {
+	if value == "" {
+		value = "-"
+	}
+	valueWidth := innerWidth - detailLabelWidth - 1
+	if valueWidth < 1 {
+		valueWidth = 1
+	}
+	return labelStyle.Render(label) + " " +
+		valueStyle.Render(lipgloss.NewStyle().Inline(true).MaxWidth(valueWidth).Render(value))
+}
+
+func formatStackHealthLine(labelStyle, valueStyle lipgloss.Style, stackVal, healthStyled string, innerWidth int) string {
+	stackPart := labelStyle.Render("Stack") + " " + valueStyle.Render(
+		lipgloss.NewStyle().Inline(true).MaxWidth(max(1, innerWidth/2)).Render(stackVal))
+	healthLabel := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Health")
+	stackPartW := lipgloss.Width(stackPart)
+	midCol := innerWidth / 2
+	if midCol < 25 {
+		midCol = 25
+	}
+	stackHealthGap := midCol - stackPartW
+	if stackHealthGap < 2 {
+		stackHealthGap = 2
+	}
+	line := stackPart + strings.Repeat(" ", stackHealthGap) + healthLabel + " " + healthStyled
+	return lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth).Render(line)
+}
+
+func detailComposeLine(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	project := labels["com.docker.compose.project"]
+	service := labels["com.docker.compose.service"]
+	version := labels["com.docker.compose.version"]
+
+	var parts []string
+	if project != "" || service != "" {
+		switch {
+		case project != "" && service != "":
+			parts = append(parts, project+"/"+service)
+		case project != "":
+			parts = append(parts, project)
+		case service != "":
+			parts = append(parts, service)
+		}
+	}
+	if version != "" {
+		parts = append(parts, "v"+version)
+	}
+	return strings.Join(parts, "  ")
+}
+
+func detailAddressLine(networks []collector.NetworkAddress) string {
+	var parts []string
+	for _, network := range networks {
+		var addrs []string
+		if network.IPv4 != "" {
+			addrs = append(addrs, network.IPv4)
+		}
+		if network.IPv6 != "" {
+			addrs = append(addrs, network.IPv6)
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+		parts = append(parts, network.Name+" "+strings.Join(addrs, ","))
+	}
+	return strings.Join(parts, "  ")
+}
+
+func detailTimeLine(meta *collector.ContainerDetail) string {
+	var parts []string
+	if !meta.StartedAt.IsZero() {
+		parts = append(parts, "start "+formatDetailTimestamp(meta.StartedAt))
+	}
+	if !meta.CreatedAt.IsZero() {
+		parts = append(parts, "create "+formatDetailTimestamp(meta.CreatedAt))
+	}
+	return strings.Join(parts, "  ")
+}
+
+func formatDetailTimestamp(ts time.Time) string {
+	return ts.UTC().Format("2006-01-02 15:04Z")
+}
+
 func RenderDetail(
 	c *collector.Container,
 	meta *collector.ContainerDetail,
@@ -52,102 +235,7 @@ func RenderDetail(
 
 	infoTitle := lipgloss.NewStyle().Inline(true).MaxWidth(titleAvail).Render(infoTitleLeft)
 
-	// Info content: 4 lines of key-value pairs
-	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(8)
-	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
-
-	healthColor := styles.TextMuted
-	healthText := c.Health
-	if healthText == "" {
-		healthText = "-"
-	}
-	switch c.Health {
-	case "healthy":
-		healthColor = styles.Success
-	case "unhealthy":
-		healthColor = styles.Error
-	case "starting":
-		healthColor = styles.Warning
-	}
-	healthStyled := lipgloss.NewStyle().Foreground(healthColor).Render(healthText)
-
-	stackVal := c.Stack
-	if stackVal == "" {
-		stackVal = "-"
-	}
-
-	// Two-column row for Stack + Health
-	stackPart := labelStyle.Render("Stack") + " " + valueStyle.Render(stackVal)
-	healthLabel := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("Health")
-	stackPartW := lipgloss.Width(stackPart)
-	midCol := innerWidth / 2
-	if midCol < 25 {
-		midCol = 25
-	}
-	stackHealthGap := midCol - stackPartW
-	if stackHealthGap < 2 {
-		stackHealthGap = 2
-	}
-
-	portsStr := collector.FormatPorts(c.Ports)
-	containerID := c.ID
-	if len(containerID) > 12 {
-		containerID = containerID[:12]
-	}
-
-	infoLines := []string{
-		labelStyle.Render("Image") + " " + valueStyle.Render(
-			lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth-9).Render(c.Image)),
-		stackPart + strings.Repeat(" ", stackHealthGap) + healthLabel + " " + healthStyled,
-		labelStyle.Render("Ports") + " " + valueStyle.Render(
-			lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth-9).Render(portsStr)),
-		labelStyle.Render("ID") + " " + valueStyle.Render(containerID),
-	}
-
-	// Network stats (for running containers with data).
-	if c.State == "running" {
-		netStr := collector.FormatBytes(c.NetRx) + " rx / " + collector.FormatBytes(c.NetTx) + " tx"
-		infoLines = append(infoLines,
-			labelStyle.Render("Net")+" "+valueStyle.Render(netStr))
-	}
-
-	if meta != nil {
-		// Volumes line
-		if len(meta.Mounts) > 0 {
-			var volParts []string
-			for _, mt := range meta.Mounts {
-				src := mt.Source
-				if len(src) > 25 {
-					src = "..." + src[len(src)-22:]
-				}
-				volParts = append(volParts, src+" → "+mt.Destination)
-			}
-			volStr := strings.Join(volParts, ", ")
-			infoLines = append(infoLines,
-				labelStyle.Render("Vols")+" "+valueStyle.Render(
-					lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth-9).Render(volStr)))
-		}
-
-		// Compose labels line
-		var labelParts []string
-		for _, key := range []string{
-			"com.docker.compose.project",
-			"com.docker.compose.service",
-			"com.docker.compose.version",
-		} {
-			if val, ok := meta.Labels[key]; ok {
-				short := key[len("com.docker.compose."):]
-				labelParts = append(labelParts, short+"="+val)
-			}
-		}
-		if len(labelParts) > 0 {
-			labelsStr := strings.Join(labelParts, " ")
-			infoLines = append(infoLines,
-				labelStyle.Render("Labels")+" "+valueStyle.Render(
-					lipgloss.NewStyle().Inline(true).MaxWidth(innerWidth-9).Render(labelsStr)))
-		}
-	}
-
+	infoLines := detailInfoLines(c, meta, innerWidth)
 	infoPanelHeight := len(infoLines) + 3 // border(2) + title(1)
 	infoContent := strings.Join(infoLines, "\n")
 	infoPanel := components.Panel(infoTitle, infoContent, width, infoPanelHeight, false)

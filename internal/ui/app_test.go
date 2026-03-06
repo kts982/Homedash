@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -291,6 +292,35 @@ func TestDockerDataMsgRecalculatesDetailLayoutWhenContainerStateChanges(t *testi
 	}
 	if updated.detailLogRows != 19 {
 		t.Fatalf("detailLogRows = %d, want 19 after the container stops", updated.detailLogRows)
+	}
+}
+
+func TestRecalcLayoutCountsPolishedDetailMetadataRows(t *testing.T) {
+	m := newTestModel()
+	m.width = 120
+	m.height = 30
+	m.detailContainer = &collector.Container{State: "running"}
+	m.detailMeta = &collector.ContainerDetail{
+		RestartPolicy: "unless-stopped",
+		Command:       "/docker-entrypoint.sh postgres",
+		CreatedAt:     time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC),
+		StartedAt:     time.Date(2026, 3, 6, 12, 34, 0, 0, time.UTC),
+		Networks: []collector.NetworkAddress{
+			{Name: "app", IPv4: "172.20.0.5"},
+		},
+		Mounts: []collector.Mount{
+			{Source: "/host/config", Destination: "/data"},
+		},
+		Labels: map[string]string{
+			"com.docker.compose.project": "homedash",
+			"com.docker.compose.service": "db",
+		},
+	}
+
+	m.recalcLayout()
+
+	if m.detailLogRows != 12 {
+		t.Fatalf("detailLogRows = %d, want 12 with metadata-rich detail panel", m.detailLogRows)
 	}
 }
 

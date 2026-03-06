@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func dockerFrame(stream byte, payload string) []byte {
@@ -254,10 +255,21 @@ func TestInspectContainer(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
+			"Created": "2026-03-01T08:00:00.000000000Z",
+			"Path": "/docker-entrypoint.sh",
+			"Args": ["postgres", "-c", "shared_buffers=256MB"],
 			"Config": {
 				"Labels": {
 					"com.docker.compose.project": "homedash",
 					"com.example.env": "prod"
+				}
+			},
+			"State": {
+				"StartedAt": "2026-03-06T12:34:56.000000000Z"
+			},
+			"HostConfig": {
+				"RestartPolicy": {
+					"Name": "unless-stopped"
 				}
 			},
 			"Mounts": [
@@ -273,7 +285,19 @@ func TestInspectContainer(t *testing.T) {
 					"Destination": "/data",
 					"Mode": "rw"
 				}
-			]
+			],
+			"NetworkSettings": {
+				"Networks": {
+					"app": {
+						"IPAddress": "172.20.0.5",
+						"GlobalIPv6Address": ""
+					},
+					"edge": {
+						"IPAddress": "172.21.0.9",
+						"GlobalIPv6Address": "fd00::9"
+					}
+				}
+			}
 		}`))
 	}))
 	defer server.Close()
@@ -311,6 +335,25 @@ func TestInspectContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(detail.Mounts, wantMounts) {
 		t.Fatalf("mounts = %#v, want %#v", detail.Mounts, wantMounts)
+	}
+	if detail.RestartPolicy != "unless-stopped" {
+		t.Fatalf("restart policy = %q, want %q", detail.RestartPolicy, "unless-stopped")
+	}
+	if detail.Command != `/docker-entrypoint.sh postgres -c shared_buffers=256MB` {
+		t.Fatalf("command = %q, want %q", detail.Command, `/docker-entrypoint.sh postgres -c shared_buffers=256MB`)
+	}
+	if got := detail.CreatedAt.UTC().Format(time.RFC3339); got != "2026-03-01T08:00:00Z" {
+		t.Fatalf("CreatedAt = %q, want %q", got, "2026-03-01T08:00:00Z")
+	}
+	if got := detail.StartedAt.UTC().Format(time.RFC3339); got != "2026-03-06T12:34:56Z" {
+		t.Fatalf("StartedAt = %q, want %q", got, "2026-03-06T12:34:56Z")
+	}
+	wantNetworks := []NetworkAddress{
+		{Name: "app", IPv4: "172.20.0.5"},
+		{Name: "edge", IPv4: "172.21.0.9", IPv6: "fd00::9"},
+	}
+	if !reflect.DeepEqual(detail.Networks, wantNetworks) {
+		t.Fatalf("networks = %#v, want %#v", detail.Networks, wantNetworks)
 	}
 }
 
