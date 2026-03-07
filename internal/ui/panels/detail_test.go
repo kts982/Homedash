@@ -122,6 +122,7 @@ func TestRenderDetailShowsLiveWaitingState(t *testing.T) {
 		"LOGS (live)",
 		"Waiting for live log output...",
 		"Follow mode is active.",
+		"ctrl+u/d page",
 		"/ search",
 	} {
 		if !strings.Contains(plain, want) {
