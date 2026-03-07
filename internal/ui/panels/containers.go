@@ -118,8 +118,11 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 	if filtering || searchInput.Value() != "" {
 		filterLine := searchInput.View()
 		if !filtering {
-			// If not active, but filter exists, show it grayed out
-			filterLine = lipgloss.NewStyle().Foreground(styles.TextMuted).Render(" / " + searchInput.Value())
+			// Show active filter with clear hint
+			filterLabel := lipgloss.NewStyle().Foreground(styles.Secondary).Render(" / ")
+			filterValue := lipgloss.NewStyle().Foreground(styles.TextPrimary).Render(searchInput.Value())
+			clearHint := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("  (/ to edit, esc to clear)")
+			filterLine = filterLabel + filterValue + clearHint
 		}
 		content = filterLine + "\n" + content
 	}
