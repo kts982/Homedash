@@ -113,6 +113,12 @@ type Model struct {
 	filtering        bool
 	selectedTarget   string // semantic selection anchor: "c:<id>" or "s:<stack>"
 
+	// Log search in detail view
+	logSearchInput   textinput.Model
+	logSearchActive  bool
+	logSearchMatches []int // indices into detailLogs that match
+	logSearchIndex   int   // current position in logSearchMatches
+
 	// Log follow mode
 	logFollowing    bool
 	logFollowCancel context.CancelFunc
@@ -179,12 +185,19 @@ func NewModel(options ModelOptions) Model {
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Secondary)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
+	lsi := textinput.New()
+	lsi.Placeholder = "Search logs..."
+	lsi.Prompt = " / "
+	lsi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Secondary)
+	lsi.TextStyle = lipgloss.NewStyle().Foreground(styles.TextPrimary)
+
 	return Model{
 		cpuHistory:             components.NewRingBuffer(60),
 		focusedPanel:           PanelContainers,
 		containerRows:          10,
 		collapsedStacks:        state.Load(),
 		searchInput:            ti,
+		logSearchInput:         lsi,
 		disks:                  disks,
 		dockerHost:             dockerHost,
 		systemRefreshInterval:  systemRefresh,
@@ -226,6 +239,36 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+
+	// Handle key events while log search input is focused
+	if m.logSearchActive {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				m.logSearchActive = false
+				m.logSearchInput.Blur()
+				return m, nil
+			case "esc":
+				m.logSearchActive = false
+				m.logSearchInput.Blur()
+				m.logSearchInput.SetValue("")
+				m.logSearchMatches = nil
+				m.logSearchIndex = 0
+				return m, nil
+			case "ctrl+c":
+				if m.collapseSeq > m.lastSavedSeq {
+					_ = state.Save(m.collapsedStacks)
+				}
+				return m, tea.Quit
+			}
+			prevQuery := m.logSearchInput.Value()
+			m.logSearchInput, cmd = m.logSearchInput.Update(msg)
+			if m.logSearchInput.Value() != prevQuery {
+				m.recomputeLogSearchMatches()
+			}
+			return m, cmd
+		}
+	}
 
 	// Handle key events while search input is focused
 	if m.filtering {
@@ -407,6 +450,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewMode == ViewDetail && msg.ContainerID == m.detailContainerID {
 			m.detailLogs = msg.Lines
 			m.detailLogsErr = msg.Err
+			if m.logSearchInput.Value() != "" {
+				m.recomputeLogSearchMatches()
+			}
 		}
 		return m, nil
 
@@ -414,6 +460,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewMode == ViewDetail && msg.StackName == m.detailStackName {
 			m.detailLogs = msg.Lines
 			m.detailLogsErr = msg.Err
+			if m.logSearchInput.Value() != "" {
+				m.recomputeLogSearchMatches()
+			}
 		}
 		return m, nil
 
@@ -549,6 +598,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cap at 1000 lines
 		if len(m.detailLogs) > 1000 {
 			m.detailLogs = m.detailLogs[len(m.detailLogs)-1000:]
+			// Recompute search matches since indices shifted
+			if m.logSearchInput.Value() != "" {
+				m.recomputeLogSearchMatches()
+			}
+		} else if query := strings.ToLower(m.logSearchInput.Value()); query != "" {
+			// Check if the new line matches
+			if strings.Contains(strings.ToLower(msg.Line), query) {
+				m.logSearchMatches = append(m.logSearchMatches, len(m.detailLogs)-1)
+			}
 		}
 		// Auto-scroll to bottom if user was at bottom
 		if wasAtBottom {
@@ -959,6 +1017,24 @@ func (m Model) View() string {
 }
 
 func (m Model) renderDetail() string {
+	logSearch := panels.LogSearch{
+		Active:      m.logSearchActive,
+		Query:       m.logSearchInput.Value(),
+		Total:       len(m.logSearchMatches),
+		CurrentLine: -1,
+	}
+	if m.logSearchActive {
+		logSearch.InputView = m.logSearchInput.View()
+	}
+	if len(m.logSearchMatches) > 0 && m.logSearchIndex >= 0 && m.logSearchIndex < len(m.logSearchMatches) {
+		logSearch.Current = m.logSearchIndex + 1
+		logSearch.CurrentLine = m.logSearchMatches[m.logSearchIndex]
+		logSearch.MatchSet = make(map[int]bool, len(m.logSearchMatches))
+		for _, idx := range m.logSearchMatches {
+			logSearch.MatchSet[idx] = true
+		}
+	}
+
 	var detail string
 	if stack := m.detailStackData(); stack != nil {
 		detail = panels.RenderStackDetail(
@@ -966,13 +1042,13 @@ func (m Model) renderDetail() string {
 			m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing)
+			m.logFollowing, logSearch)
 	} else {
 		detail = panels.RenderDetail(
 			m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing)
+			m.logFollowing, logSearch)
 	}
 	return lipgloss.NewStyle().
 		Background(styles.BgBase).
@@ -1169,6 +1245,43 @@ func (m *Model) clearDetailView() {
 	m.detailScrollOffset = 0
 	m.confirmAction = ""
 	m.actionResult = ""
+	m.logSearchActive = false
+	m.logSearchInput.Blur()
+	m.logSearchInput.SetValue("")
+	m.logSearchMatches = nil
+	m.logSearchIndex = 0
+}
+
+func (m *Model) recomputeLogSearchMatches() {
+	query := strings.ToLower(m.logSearchInput.Value())
+	m.logSearchMatches = nil
+	m.logSearchIndex = 0
+	if query == "" {
+		return
+	}
+	for i, line := range m.detailLogs {
+		if strings.Contains(strings.ToLower(line), query) {
+			m.logSearchMatches = append(m.logSearchMatches, i)
+		}
+	}
+	if len(m.logSearchMatches) > 0 {
+		m.scrollToLogLine(m.logSearchMatches[0])
+	}
+}
+
+func (m *Model) scrollToLogLine(lineIdx int) {
+	target := lineIdx - m.detailLogRows/2
+	if target < 0 {
+		target = 0
+	}
+	maxScroll := len(m.detailLogs) - m.detailLogRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if target > maxScroll {
+		target = maxScroll
+	}
+	m.detailScrollOffset = target
 }
 
 func (m Model) stackPreviewByName(stackName string) *panels.StackPreview {

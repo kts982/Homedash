@@ -489,7 +489,26 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
-		m.clearDetailView()
+		if m.logSearchInput.Value() != "" {
+			m.logSearchInput.SetValue("")
+			m.logSearchMatches = nil
+			m.logSearchIndex = 0
+		} else {
+			m.clearDetailView()
+		}
+	case "/":
+		m.logSearchActive = true
+		return m, m.logSearchInput.Focus()
+	case "n":
+		if len(m.logSearchMatches) > 0 {
+			m.logSearchIndex = (m.logSearchIndex + 1) % len(m.logSearchMatches)
+			m.scrollToLogLine(m.logSearchMatches[m.logSearchIndex])
+		}
+	case "N":
+		if len(m.logSearchMatches) > 0 {
+			m.logSearchIndex = (m.logSearchIndex - 1 + len(m.logSearchMatches)) % len(m.logSearchMatches)
+			m.scrollToLogLine(m.logSearchMatches[m.logSearchIndex])
+		}
 	case "f":
 		if m.logFollowing {
 			m.stopFollowing()
