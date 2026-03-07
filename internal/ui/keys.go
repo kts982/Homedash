@@ -31,7 +31,7 @@ func (m *Model) enterDetailView(c *collector.Container) tea.Cmd {
 	m.actionResult = ""
 	m.recalcLayout()
 	return tea.Batch(
-		collectLogsCmd(c.ID, 50),
+		m.startFollowing(),
 		collectDetailCmd(c.ID),
 	)
 }
@@ -49,7 +49,7 @@ func (m *Model) enterStackDetailView(stackName string) tea.Cmd {
 	m.confirmAction = ""
 	m.actionResult = ""
 	m.recalcLayout()
-	return collectStackLogsCmd(m.dockerData.Containers, stackName, 50)
+	return m.startFollowing()
 }
 
 func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
@@ -236,6 +236,7 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			if m.selectedIndex < maxIdx {
 				m.selectedIndex++
 			}
+			m.trackSelection()
 			m.ensureVisible()
 		}
 	case "k", "up":
@@ -243,6 +244,7 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			if m.selectedIndex > 0 {
 				m.selectedIndex--
 			}
+			m.trackSelection()
 			m.ensureVisible()
 		}
 	case "enter":
@@ -320,6 +322,12 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.focusedPanel = PanelContainers
 		m.recalcLayout()
 		return m, m.searchInput.Focus()
+	case "esc":
+		if m.searchInput.Value() != "" {
+			m.searchInput.SetValue("")
+			m.rebuildDisplayItems()
+			m.recalcLayout()
+		}
 	}
 	return m, nil
 }
@@ -384,6 +392,7 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 		if item.Kind == DisplayGroup {
 			// Click on group header toggles collapse
 			m.selectedIndex = idx
+			m.trackSelection()
 			m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
 			m.rebuildDisplayItems()
 			m.ensureVisible()
@@ -393,6 +402,7 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 			}
 		} else if item.Kind == DisplayContainer && item.Container != nil {
 			m.selectedIndex = idx
+			m.trackSelection()
 			if isDoubleClick {
 				// Double-click opens detail view
 				return m, m.enterDetailView(item.Container)
