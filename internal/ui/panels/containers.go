@@ -29,7 +29,7 @@ type stackSummarySegment struct {
 	style       lipgloss.Style
 }
 
-func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool) string {
+func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool, testMode bool) string {
 	innerWidth := width - 4
 
 	// Adaptive columns based on available width
@@ -103,7 +103,11 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 	}
 
 	// Status line
-	refreshNote := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("[5s refresh]")
+	refreshNoteText := "[5s refresh]"
+	if testMode {
+		refreshNoteText = "[test mode]"
+	}
+	refreshNote := lipgloss.NewStyle().Foreground(styles.TextMuted).Render(refreshNoteText)
 	summary := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(
 		fmt.Sprintf("(%d/%d running)", running, total))
 

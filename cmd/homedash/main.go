@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -12,6 +13,9 @@ import (
 )
 
 func main() {
+	testMode := flag.Bool("test-mode", false, "Enable deterministic test mode (disables live refresh)")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
@@ -33,6 +37,7 @@ func main() {
 			SystemRefreshInterval:  cfg.Refresh.System,
 			DockerRefreshInterval:  cfg.Refresh.Docker,
 			WeatherRefreshInterval: cfg.Refresh.Weather,
+			TestMode:               *testMode,
 		}),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

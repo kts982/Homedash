@@ -9,7 +9,7 @@ import (
 	"github.com/kostas/homedash/internal/ui/styles"
 )
 
-func RenderHeader(data collector.SystemData, width int) string {
+func RenderHeader(data collector.SystemData, width int, testMode bool) string {
 	bg := styles.BgPanel
 	fg := styles.TextPrimary
 
@@ -39,7 +39,13 @@ func RenderHeader(data collector.SystemData, width int) string {
 
 	title := titleStyle.Render("HOMEDASH")
 	sep := sepStyle.Render("  │  ")
-	clock := timeStyle.Render(time.Now().Format("15:04:05"))
+
+	currentTime := time.Now()
+	if testMode {
+		// Use fixed time in test mode
+		currentTime = time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC)
+	}
+	clock := timeStyle.Render(currentTime.Format("15:04:05"))
 	clockWidth := lipgloss.Width(clock)
 	clockReserved := clockWidth + 2 // minimum gap before clock
 
