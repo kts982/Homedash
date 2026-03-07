@@ -10,7 +10,7 @@ import (
 func collectMockSystemCmd() tea.Msg {
 	return SystemDataMsg{
 		Data: collector.SystemData{
-			Hostname:   "test-host",
+			Hostname:   "synthetic-host",
 			Uptime:     48 * time.Hour,
 			CPUPercent: 12.5,
 			CPUCount:   8,
@@ -19,7 +19,7 @@ func collectMockSystemCmd() tea.Msg {
 			MemPercent: 25.0,
 			LoadAvg:    [3]float64{1.0, 0.5, 0.2},
 			Disks: []collector.DiskInfo{
-				{Mount: "/", Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024, Percent: 40.0},
+				{Mount: "/data", Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024, Percent: 40.0},
 			},
 			NetRxRate:   1024 * 1024,
 			NetTxRate:   512 * 1024,
@@ -33,30 +33,30 @@ func collectMockDockerCmd() tea.Msg {
 		Data: collector.DockerData{
 			Containers: []collector.Container{
 				{
-					ID:      "cont-1",
-					Name:    "nginx-proxy",
-					Stack:   "core",
-					Image:   "nginx:latest",
+					ID:      "id-1",
+					Name:    "service-alpha",
+					Stack:   "infra",
+					Image:   "image-alpha:latest",
 					State:   "running",
 					Health:  "healthy",
 					CPUPerc: 0.5,
 					MemUsed: 128 * 1024 * 1024,
 				},
 				{
-					ID:      "cont-2",
-					Name:    "postgres-db",
-					Stack:   "core",
-					Image:   "postgres:15",
+					ID:      "id-2",
+					Name:    "service-beta",
+					Stack:   "infra",
+					Image:   "image-beta:latest",
 					State:   "running",
 					Health:  "healthy",
 					CPUPerc: 1.2,
 					MemUsed: 512 * 1024 * 1024,
 				},
 				{
-					ID:      "cont-3",
-					Name:    "minecraft-server",
-					Stack:   "games",
-					Image:   "itzg/minecraft-server",
+					ID:      "id-3",
+					Name:    "service-gamma",
+					Stack:   "apps",
+					Image:   "image-gamma:latest",
 					State:   "exited",
 					Health:  "-",
 					CPUPerc: 0,
@@ -73,13 +73,13 @@ func collectMockDockerCmd() tea.Msg {
 func collectMockWeatherCmd() tea.Msg {
 	return WeatherDataMsg{
 		Data: collector.WeatherData{
-			Location:    "Test City",
+			Location:    "Synthetic Location",
 			TempC:       "20",
 			FeelsLikeC:  "21",
-			Condition:   "Sunny",
+			Condition:   "Clear",
 			Humidity:    "45%",
 			WindSpeed:   "10",
-			WindDir:     "NW",
+			WindDir:     "N",
 			Icon:        "☀️",
 			CollectedAt: time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC),
 		},
@@ -90,9 +90,9 @@ func collectMockLogsCmd(containerID string, tail int) tea.Msg {
 	return ContainerLogsMsg{
 		ContainerID: containerID,
 		Lines: []string{
-			"2026-03-07T12:00:00Z [info] Starting service...",
-			"2026-03-07T12:00:01Z [info] Listening on :80",
-			"2026-03-07T12:00:05Z [debug] Connection from 127.0.0.1",
+			"2026-03-07T12:00:00Z [info] Starting mock service...",
+			"2026-03-07T12:00:01Z [info] Listening on port 8080",
+			"2026-03-07T12:00:05Z [debug] Connection established",
 		},
 	}
 }
@@ -101,8 +101,8 @@ func collectMockStackLogsCmd(stackName string, tail int) tea.Msg {
 	return StackLogsMsg{
 		StackName: stackName,
 		Lines: []string{
-			"2026-03-07T12:00:00Z [nginx-proxy] Starting nginx...",
-			"2026-03-07T12:00:00Z [postgres-db] Database ready",
+			"2026-03-07T12:00:00Z [service-alpha] Initializing...",
+			"2026-03-07T12:00:00Z [service-beta] Ready for requests",
 		},
 	}
 }
@@ -114,15 +114,15 @@ func collectMockDetailCmd(containerID string) tea.Msg {
 			CreatedAt: time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
 			StartedAt: time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC),
 			RestartPolicy: "always",
-			Command: "/docker-entrypoint.sh nginx -g 'daemon off;'",
+			Command: "/usr/bin/mock-entrypoint.sh",
 			Mounts: []collector.Mount{
-				{Source: "/etc/nginx", Destination: "/etc/nginx", Mode: "ro", Type: "bind"},
+				{Source: "/mock/source", Destination: "/mock/dest", Mode: "ro", Type: "bind"},
 			},
 			Networks: []collector.NetworkAddress{
-				{Name: "bridge", IPv4: "172.17.0.2"},
+				{Name: "mock-net", IPv4: "10.0.0.2"},
 			},
 			PublishedPorts: []collector.PublishedPort{
-				{HostIP: "0.0.0.0", HostPort: 80, ContainerPort: 80, Type: "tcp"},
+				{HostIP: "0.0.0.0", HostPort: 8080, ContainerPort: 8080, Type: "tcp"},
 			},
 		},
 	}
