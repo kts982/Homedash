@@ -107,8 +107,9 @@ type Model struct {
 	quickMenuStackName   string
 
 	// Search/Filter
-	searchInput textinput.Model
-	filtering   bool
+	searchInput      textinput.Model
+	filtering        bool
+	selectedTarget   string // semantic selection anchor: "c:<id>" or "s:<stack>"
 
 	// Log follow mode
 	logFollowing    bool
@@ -891,6 +892,20 @@ func (m *Model) rebuildDisplayItems() {
 		})
 	}
 
+	// Restore selection by semantic target
+	if m.selectedTarget != "" {
+		for i, item := range m.displayItems {
+			if item.Kind == DisplayGroup && m.selectedTarget == "s:"+item.StackName {
+				m.selectedIndex = i
+				break
+			}
+			if item.Kind == DisplayContainer && item.Container != nil && m.selectedTarget == "c:"+item.Container.ID {
+				m.selectedIndex = i
+				break
+			}
+		}
+	}
+
 	if m.selectedIndex >= len(m.displayItems) {
 		m.selectedIndex = max(0, len(m.displayItems)-1)
 	}
@@ -1087,6 +1102,17 @@ func (m Model) quickMenuStackPreview() *panels.StackPreview {
 	}
 
 	return m.stackPreviewByName(m.quickMenuStackName)
+}
+
+func (m *Model) trackSelection() {
+	if m.selectedIndex >= 0 && m.selectedIndex < len(m.displayItems) {
+		item := m.displayItems[m.selectedIndex]
+		if item.Kind == DisplayGroup {
+			m.selectedTarget = "s:" + item.StackName
+		} else if item.Kind == DisplayContainer && item.Container != nil {
+			m.selectedTarget = "c:" + item.Container.ID
+		}
+	}
 }
 
 func (m *Model) clearDashboardAction() {
