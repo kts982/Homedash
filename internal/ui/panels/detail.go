@@ -397,6 +397,7 @@ func RenderDetail(
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
 	logFollowing bool,
+	logSearch LogSearch,
 ) string {
 	if c == nil {
 		return "No container selected"
@@ -453,7 +454,7 @@ func RenderDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logSearch)
 
 	// Slice visible log lines
 	endIdx := scrollOffset + logContentHeight
@@ -461,6 +462,7 @@ func RenderDetail(
 		endIdx = len(logLines)
 	}
 	visible := logLines[scrollOffset:endIdx]
+	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth)
 	for len(visible) < logContentHeight {
 		visible = append(visible, "")
 	}
@@ -469,17 +471,27 @@ func RenderDetail(
 	logPanel := components.Panel(logTitleLeft, logContent, width, logPanelHeight, true)
 
 	// ── ACTION BAR ──────────────────────────────────────────
-	actionBar := renderDetailActionBar(c, confirmAction, actionResult, width, logFollowing)
+	actionBar := renderDetailActionBar(c, confirmAction, actionResult, width, logFollowing, logSearch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, infoPanel, logPanel, actionBar)
 }
 
-func renderDetailActionBar(c *collector.Container, confirmAction, actionResult string, width int, logFollowing bool) string {
+func renderDetailActionBar(c *collector.Container, confirmAction, actionResult string, width int, logFollowing bool, logSearch LogSearch) string {
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
 	descStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
 
 	var content string
-	if confirmAction != "" {
+	if logSearch.Active {
+		content = logSearch.InputView
+		if logSearch.Total > 0 {
+			content += "  " + lipgloss.NewStyle().Foreground(styles.TextSecondary).
+				Render(fmt.Sprintf("%d/%d", logSearch.Current, logSearch.Total))
+		} else if logSearch.Query != "" {
+			content += "  " + lipgloss.NewStyle().Foreground(styles.Error).Render("no matches")
+		}
+		content += "   " + keyStyle.Render("enter") + descStyle.Render(" accept") +
+			"   " + keyStyle.Render("esc") + descStyle.Render(" cancel")
+	} else if confirmAction != "" {
 		confirmStyle := lipgloss.NewStyle().Foreground(styles.Warning).Bold(true)
 		content = confirmStyle.Render(
 			fmt.Sprintf("%s %s?", capitalize(confirmAction), c.Name)) +
@@ -503,6 +515,11 @@ func renderDetailActionBar(c *collector.Container, confirmAction, actionResult s
 			keyStyle.Render("g/G") + descStyle.Render(" top/end"),
 			keyStyle.Render("f") + descStyle.Render(" "+followLabel),
 			keyStyle.Render("l") + descStyle.Render(" refresh"),
+			keyStyle.Render("/") + descStyle.Render(" search"),
+		}
+		if logSearch.Query != "" {
+			parts = append(parts,
+				keyStyle.Render("n/N")+descStyle.Render(" next/prev"))
 		}
 		if c.State == "running" {
 			parts = append(parts,
@@ -648,7 +665,7 @@ func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth 
 	}
 }
 
-func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int) string {
+func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logSearch ...LogSearch) string {
 	titleStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
@@ -686,6 +703,16 @@ func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCo
 		endPos := min(scrollOffset+logContentHeight, lineCount)
 		statusText = fmt.Sprintf("%s  %d-%d/%d", statusText, scrollOffset+1, endPos, lineCount)
 	}
+	// Append search match info
+	if len(logSearch) > 0 && logSearch[0].Query != "" {
+		ls := logSearch[0]
+		if ls.Total > 0 {
+			statusText += fmt.Sprintf("  [%d/%d matches]", ls.Current, ls.Total)
+		} else {
+			statusText += "  [no matches]"
+		}
+	}
+
 	if statusText == "" {
 		return title
 	}
@@ -697,6 +724,36 @@ func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCo
 }
 
 // detectLogLevel checks the first portion of a log message for level keywords.
+// LogSearch holds the state for in-log search highlighting.
+type LogSearch struct {
+	Active      bool
+	InputView   string
+	Query       string
+	MatchSet    map[int]bool // raw log line indices that match
+	CurrentLine int          // raw log line index of current match, -1 = none
+	Total       int
+	Current     int // 1-based index into matches
+}
+
+func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearch, width int) {
+	if logSearch.Query == "" || len(logSearch.MatchSet) == 0 {
+		return
+	}
+	matchBg := lipgloss.Color("#3a3000")
+	currentBg := lipgloss.Color("#5a4a00")
+	for i := range visible {
+		origIdx := scrollOffset + i
+		if !logSearch.MatchSet[origIdx] {
+			continue
+		}
+		bg := matchBg
+		if origIdx == logSearch.CurrentLine {
+			bg = currentBg
+		}
+		visible[i] = lipgloss.NewStyle().Background(bg).Width(width).Inline(true).Render(visible[i])
+	}
+}
+
 func detectLogLevel(msg string) lipgloss.Color {
 	check := msg
 	if len(check) > 50 {
