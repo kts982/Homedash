@@ -47,6 +47,7 @@ func RenderStackDetail(
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
 	logFollowing bool,
+	logSearch LogSearch,
 ) string {
 	if stack == nil {
 		return "No stack selected"
@@ -92,19 +93,20 @@ func RenderStackDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logSearch)
 
 	endIdx := scrollOffset + logContentHeight
 	if endIdx > len(logLines) {
 		endIdx = len(logLines)
 	}
 	visible := logLines[scrollOffset:endIdx]
+	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth)
 	for len(visible) < logContentHeight {
 		visible = append(visible, "")
 	}
 	logPanel := components.Panel(logTitleLeft, strings.Join(visible, "\n"), width, logPanelHeight, true)
 
-	actionBar := renderStackDetailActionBar(stack, confirmAction, actionResult, width, logFollowing)
+	actionBar := renderStackDetailActionBar(stack, confirmAction, actionResult, width, logFollowing, logSearch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, infoPanel, logPanel, actionBar)
 }
@@ -237,12 +239,22 @@ func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerW
 	}
 }
 
-func renderStackDetailActionBar(stack *StackDetail, confirmAction, actionResult string, width int, logFollowing bool) string {
+func renderStackDetailActionBar(stack *StackDetail, confirmAction, actionResult string, width int, logFollowing bool, logSearch LogSearch) string {
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
 	descStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
 
 	var content string
-	if confirmAction != "" {
+	if logSearch.Active {
+		content = logSearch.InputView
+		if logSearch.Total > 0 {
+			content += "  " + lipgloss.NewStyle().Foreground(styles.TextSecondary).
+				Render(fmt.Sprintf("%d/%d", logSearch.Current, logSearch.Total))
+		} else if logSearch.Query != "" {
+			content += "  " + lipgloss.NewStyle().Foreground(styles.Error).Render("no matches")
+		}
+		content += "   " + keyStyle.Render("enter") + descStyle.Render(" accept") +
+			"   " + keyStyle.Render("esc") + descStyle.Render(" cancel")
+	} else if confirmAction != "" {
 		confirmStyle := lipgloss.NewStyle().Foreground(styles.Warning).Bold(true)
 		content = confirmStyle.Render(fmt.Sprintf("%s %s?", capitalize(confirmAction), stack.Name)) +
 			"  " + keyStyle.Render("y") + descStyle.Render(" confirm") +
@@ -261,10 +273,12 @@ func renderStackDetailActionBar(stack *StackDetail, confirmAction, actionResult 
 		parts := []string{
 			keyStyle.Render("esc") + descStyle.Render(" back"),
 			keyStyle.Render("j/k") + descStyle.Render(" scroll"),
-			keyStyle.Render("ctrl+u/d") + descStyle.Render(" page"),
-			keyStyle.Render("g/G") + descStyle.Render(" top/end"),
 			keyStyle.Render("f") + descStyle.Render(" "+followLabel),
-			keyStyle.Render("l") + descStyle.Render(" refresh"),
+			keyStyle.Render("/") + descStyle.Render(" search"),
+		}
+		if logSearch.Query != "" {
+			parts = append(parts,
+				keyStyle.Render("n/N")+descStyle.Render(" next/prev"))
 		}
 		if stack.StoppedCount > 0 {
 			parts = append(parts, keyStyle.Render("S")+descStyle.Render(" start"))

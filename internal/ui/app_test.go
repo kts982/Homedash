@@ -800,6 +800,141 @@ func TestEnterStackDetailViewStartsFollowing(t *testing.T) {
 	}
 }
 
+func TestLogSearchMatchesFound(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailLogRows = 10
+	m.detailLogs = []string{
+		"2026-03-06T12:00:00Z starting server",
+		"2026-03-06T12:00:01Z listening on port 8080",
+		"2026-03-06T12:00:02Z error: connection refused",
+		"2026-03-06T12:00:03Z retrying connection",
+		"2026-03-06T12:00:04Z error: timeout",
+	}
+	m.logSearchInput.SetValue("error")
+	m.recomputeLogSearchMatches()
+
+	if len(m.logSearchMatches) != 2 {
+		t.Fatalf("len(logSearchMatches) = %d, want 2", len(m.logSearchMatches))
+	}
+	if m.logSearchMatches[0] != 2 {
+		t.Fatalf("logSearchMatches[0] = %d, want 2", m.logSearchMatches[0])
+	}
+	if m.logSearchMatches[1] != 4 {
+		t.Fatalf("logSearchMatches[1] = %d, want 4", m.logSearchMatches[1])
+	}
+	if m.logSearchIndex != 0 {
+		t.Fatalf("logSearchIndex = %d, want 0", m.logSearchIndex)
+	}
+}
+
+func TestLogSearchNavigateNextPrev(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailLogRows = 10
+	m.detailLogs = []string{
+		"line 0",
+		"error line 1",
+		"line 2",
+		"error line 3",
+		"error line 4",
+	}
+	m.logSearchInput.SetValue("error")
+	m.recomputeLogSearchMatches()
+
+	// Navigate forward
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	if m.logSearchIndex != 1 {
+		t.Fatalf("after n: logSearchIndex = %d, want 1", m.logSearchIndex)
+	}
+
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	if m.logSearchIndex != 2 {
+		t.Fatalf("after n: logSearchIndex = %d, want 2", m.logSearchIndex)
+	}
+
+	// Wrap around
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	if m.logSearchIndex != 0 {
+		t.Fatalf("after n wrap: logSearchIndex = %d, want 0", m.logSearchIndex)
+	}
+
+	// Navigate backward
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}}, &m)
+	if m.logSearchIndex != 2 {
+		t.Fatalf("after N: logSearchIndex = %d, want 2", m.logSearchIndex)
+	}
+}
+
+func TestLogSearchEscClearsSearch(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailLogRows = 10
+	m.detailLogs = []string{"error line"}
+	m.logSearchInput.SetValue("error")
+	m.recomputeLogSearchMatches()
+
+	// Esc should clear search, not exit detail
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+
+	if m.logSearchInput.Value() != "" {
+		t.Fatalf("logSearchInput = %q, want empty", m.logSearchInput.Value())
+	}
+	if m.logSearchMatches != nil {
+		t.Fatalf("logSearchMatches = %v, want nil", m.logSearchMatches)
+	}
+	if m.viewMode != ViewDetail {
+		t.Fatal("viewMode should still be ViewDetail after clearing search")
+	}
+}
+
+func TestLogSearchEscWithoutSearchExitsDetail(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+
+	handleDetailKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+
+	if m.viewMode != ViewDashboard {
+		t.Fatal("viewMode should be ViewDashboard after esc with no search")
+	}
+}
+
+func TestLogSearchClearedOnDetailExit(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailLogs = []string{"error line"}
+	m.logSearchInput.SetValue("error")
+	m.recomputeLogSearchMatches()
+
+	m.clearDetailView()
+
+	if m.logSearchInput.Value() != "" {
+		t.Fatalf("logSearchInput = %q, want empty after clearDetailView", m.logSearchInput.Value())
+	}
+	if m.logSearchMatches != nil {
+		t.Fatalf("logSearchMatches should be nil after clearDetailView")
+	}
+}
+
+func TestLogSearchNoMatches(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc123"
+	m.detailLogRows = 10
+	m.detailLogs = []string{"starting server", "listening on port 8080"}
+	m.logSearchInput.SetValue("nonexistent")
+	m.recomputeLogSearchMatches()
+
+	if len(m.logSearchMatches) != 0 {
+		t.Fatalf("len(logSearchMatches) = %d, want 0", len(m.logSearchMatches))
+	}
+}
+
 func TestRunningCount(t *testing.T) {
 	m := newTestModel()
 	m.dockerData = collector.DockerData{
