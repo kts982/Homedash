@@ -273,7 +273,10 @@ func renderStackDetailActionBar(stack *StackDetail, confirmAction, actionResult 
 		parts := []string{
 			keyStyle.Render("esc") + descStyle.Render(" back"),
 			keyStyle.Render("j/k") + descStyle.Render(" scroll"),
+			keyStyle.Render("ctrl+u/d") + descStyle.Render(" page"),
+			keyStyle.Render("g/G") + descStyle.Render(" top/end"),
 			keyStyle.Render("f") + descStyle.Render(" "+followLabel),
+			keyStyle.Render("l") + descStyle.Render(" refresh"),
 			keyStyle.Render("/") + descStyle.Render(" search"),
 		}
 		if logSearch.Query != "" {
