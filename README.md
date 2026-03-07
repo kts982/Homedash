@@ -45,10 +45,12 @@ Full-screen container and stack logs, detail metadata, and quick actions without
 
 - **Unified homelab view** - host metrics, Docker containers, and quick actions in one terminal UI
 - **Compose-stack grouping and summaries** - containers grouped by `com.docker.compose.project`, with collapsible stacks, health counts, and aggregate stack status
-- **Container and stack detail views** - full-screen log viewers with follow mode, merged stack logs, published port hints, mounts, and start/stop/restart actions
+- **Container and stack detail views** - full-screen log viewers with default follow mode on entry, merged stack logs, published port hints, mounts, and start/stop/restart actions
+- **Log search and navigation** - `/` in detail views highlights matches across logs, with `n`/`N` to cycle through them
 - **Quick-action menu** - `space` opens fast stack or container actions, including stack logs, without leaving the dashboard
 - **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
-- **Container search** - filter containers by name with `/`
+- **Container search** - filter dashboard containers by name with `/`
+- **Deterministic test mode** - `--test-mode` flag for developers to run the TUI with synthetic data and frozen UI elements for stable testing and screenshots (internal helper)
 - **Notifications** - Docker state changes, disk warnings, and weather errors
 - **Weather** - current conditions via [wttr.in](https://wttr.in)
 - **Responsive layout** - works across narrow and wide terminals
@@ -170,6 +172,8 @@ system:
 | `ctrl+u` / `ctrl+d` or `PgUp` / `PgDn` | Scroll by half page |
 | `g` / `G` | Jump to top / bottom of logs |
 | `f` | Toggle log follow mode (live streaming) |
+| `/` | Search logs (substring highlight) |
+| `n` / `N` | Jump to next / previous search match |
 | `l` | Refresh logs |
 | `s` | Stop current container or stack |
 | `S` | Start current container or stack |
