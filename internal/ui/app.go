@@ -59,6 +59,8 @@ type Model struct {
 	width  int
 	height int
 
+	TestMode bool
+
 	systemData  collector.SystemData
 	dockerData  collector.DockerData
 	weatherData collector.WeatherData
@@ -143,6 +145,7 @@ type ModelOptions struct {
 	SystemRefreshInterval  time.Duration
 	DockerRefreshInterval  time.Duration
 	WeatherRefreshInterval time.Duration
+	TestMode               bool
 }
 
 func NewModel(options ModelOptions) Model {
@@ -189,20 +192,36 @@ func NewModel(options ModelOptions) Model {
 		weatherRefreshInterval: weatherRefresh,
 		diskWarned:             make(map[string]bool),
 		shownWarnings:          make(map[string]bool),
+		TestMode:               options.TestMode,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	if m.TestMode {
+		return tea.Batch(
+			func() tea.Msg { return collectMockSystemCmd() },
+			func() tea.Msg { return collectMockDockerCmd() },
+			func() tea.Msg { return collectMockWeatherCmd() },
+		)
+	}
+
+	cmds := []tea.Cmd{
 		// Initial data collection
 		func() tea.Msg { return collectSystemCmd(m.disks) },
 		func() tea.Msg { return collectDockerCmd() },
 		func() tea.Msg { return collectWeatherCmd() },
-		// Start tick timers
-		systemTickCmd(m.disks, m.systemRefreshInterval),
-		dockerTickCmd(m.dockerRefreshInterval),
-		weatherTickCmd(m.weatherRefreshInterval),
-	)
+	}
+
+	if !m.TestMode {
+		cmds = append(cmds,
+			// Start tick timers
+			systemTickCmd(m.disks, m.systemRefreshInterval),
+			dockerTickCmd(m.dockerRefreshInterval),
+			weatherTickCmd(m.weatherRefreshInterval),
+		)
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -292,6 +311,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.systemErr = msg.Err
+		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
+		}
 		cmds := append(notifCmds, systemTickCmd(m.disks, m.systemRefreshInterval))
 		return m, tea.Batch(cmds...)
 
@@ -374,6 +396,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.recalcLayout()
+		}
+		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
 		}
 		cmds := append(notifCmds, dockerTickCmd(m.dockerRefreshInterval))
 		return m, tea.Batch(cmds...)
@@ -471,6 +496,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.weatherErr = nil
 			m.weatherWasOK = true
 			m.weatherRetries = 0
+			if m.TestMode {
+				return m, nil
+			}
 			return m, weatherTickCmd(m.weatherRefreshInterval)
 		}
 		m.weatherErr = msg.Err
@@ -480,6 +508,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.pushNotify("Weather update failed", levelWarning); cmd != nil {
 				notifCmds = append(notifCmds, cmd)
 			}
+		}
+		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
 		}
 		if m.weatherRetries < 3 {
 			m.weatherRetries++
@@ -547,6 +578,9 @@ func (m *Model) stopFollowing() {
 
 // startFollowing begins streaming logs for the current detail container.
 func (m *Model) startFollowing() tea.Cmd {
+	if m.TestMode {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan string, 64)
 
@@ -971,7 +1005,8 @@ func (m Model) renderDashboard() string {
 		m.dockerData.Running, m.dockerData.Total,
 		m.scrollOffset, m.selectedIndex, layout.containerRows, m.width,
 		m.focusedPanel == PanelContainers,
-		m.searchInput, m.filtering)
+		m.searchInput, m.filtering,
+		m.TestMode)
 
 	// Quick-action menu overlay
 	if m.quickMenuOpen {
@@ -1000,7 +1035,7 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		return dashboardLayoutMetrics{}
 	}
 
-	header := panels.RenderHeader(m.systemData, m.width)
+	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
 
 	topHeight := 11
 	var topRow string
