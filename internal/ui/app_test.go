@@ -688,6 +688,118 @@ func TestUpdateStackActionMsgNoopStaysCompact(t *testing.T) {
 	}
 }
 
+func TestSelectionPreservedAcrossFilterChange(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "a1", Name: "nginx", Stack: "web", State: "running"},
+			{ID: "b2", Name: "postgres", Stack: "db", State: "running"},
+			{ID: "c3", Name: "redis", Stack: "db", State: "running"},
+		},
+	}
+	m.rebuildDisplayItems()
+
+	// Items: db-group(0), postgres(1), redis(2), web-group(3), nginx(4)
+	// Select postgres at index 1
+	m.selectedIndex = 1
+	m.trackSelection()
+
+	if m.selectedTarget != "c:b2" {
+		t.Fatalf("selectedTarget = %q, want %q", m.selectedTarget, "c:b2")
+	}
+
+	// Apply filter that still includes postgres
+	m.searchInput.SetValue("post")
+	m.rebuildDisplayItems()
+
+	// Should find postgres again (db-group at 0, postgres at 1)
+	if m.selectedIndex != 1 {
+		t.Fatalf("selectedIndex = %d, want 1 after filter preserves selection", m.selectedIndex)
+	}
+	if m.displayItems[m.selectedIndex].Container == nil || m.displayItems[m.selectedIndex].Container.ID != "b2" {
+		t.Fatal("selection should still point to postgres after filter")
+	}
+}
+
+func TestSelectionPreservedForStackGroup(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "a1", Name: "nginx", Stack: "web", State: "running"},
+			{ID: "b2", Name: "postgres", Stack: "db", State: "running"},
+		},
+	}
+	m.rebuildDisplayItems()
+
+	// Select "web" group header (index 1, since db comes first alphabetically: db-group, postgres, web-group, nginx)
+	m.selectedIndex = 2
+	m.trackSelection()
+
+	if m.selectedTarget != "s:web" {
+		t.Fatalf("selectedTarget = %q, want %q", m.selectedTarget, "s:web")
+	}
+}
+
+func TestEscClearsFilterOnDashboard(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "a1", Name: "nginx", Stack: "web", State: "running"},
+			{ID: "b2", Name: "postgres", Stack: "db", State: "running"},
+		},
+	}
+	m.searchInput.SetValue("nginx")
+	m.rebuildDisplayItems()
+
+	// Esc should clear filter
+	handleDashboardKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+
+	if m.searchInput.Value() != "" {
+		t.Fatalf("searchInput value = %q, want empty after esc", m.searchInput.Value())
+	}
+	// All items should be visible again
+	if len(m.displayItems) != 4 {
+		t.Fatalf("len(displayItems) = %d, want 4 after clearing filter", len(m.displayItems))
+	}
+}
+
+func TestEnterDetailViewStartsFollowing(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "abc123", Name: "web", Stack: "app", State: "running"},
+		},
+	}
+
+	m.enterDetailView(&m.dockerData.Containers[0])
+
+	if !m.logFollowing {
+		t.Fatal("logFollowing = false, want true after entering detail view")
+	}
+	if m.viewMode != ViewDetail {
+		t.Fatalf("viewMode = %d, want %d", m.viewMode, ViewDetail)
+	}
+}
+
+func TestEnterStackDetailViewStartsFollowing(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "abc123", Name: "web", Stack: "app", State: "running"},
+		},
+	}
+
+	m.enterStackDetailView("app")
+
+	if !m.logFollowing {
+		t.Fatal("logFollowing = false, want true after entering stack detail view")
+	}
+	if m.detailStackName != "app" {
+		t.Fatalf("detailStackName = %q, want %q", m.detailStackName, "app")
+	}
+}
+
 func TestRunningCount(t *testing.T) {
 	m := newTestModel()
 	m.dockerData = collector.DockerData{
