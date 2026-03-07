@@ -59,7 +59,7 @@ func TestRenderContainersShowsStackSummaryRow(t *testing.T) {
 			StartingCount:  1,
 			StoppedCount:   1,
 		},
-	}, 3, 4, 0, 0, 1, 90, true, input, false)
+	}, 3, 4, 0, 0, 1, 90, true, input, false, false)
 	plain := stripANSI(view)
 
 	for _, want := range []string{"3/4 up", "1 unhealthy", "1 starting", "1 stopped"} {

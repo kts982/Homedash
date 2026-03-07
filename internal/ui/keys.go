@@ -30,6 +30,14 @@ func (m *Model) enterDetailView(c *collector.Container) tea.Cmd {
 	m.confirmAction = ""
 	m.actionResult = ""
 	m.recalcLayout()
+
+	if m.TestMode {
+		return tea.Batch(
+			func() tea.Msg { return collectMockLogsCmd(c.ID, 50) },
+			func() tea.Msg { return collectMockDetailCmd(c.ID) },
+		)
+	}
+
 	return tea.Batch(
 		m.startFollowing(),
 		collectDetailCmd(c.ID),
@@ -49,6 +57,11 @@ func (m *Model) enterStackDetailView(stackName string) tea.Cmd {
 	m.confirmAction = ""
 	m.actionResult = ""
 	m.recalcLayout()
+
+	if m.TestMode {
+		return func() tea.Msg { return collectMockStackLogsCmd(stackName, 50) }
+	}
+
 	return m.startFollowing()
 }
 
@@ -312,6 +325,13 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		m.refreshing = true
+		if m.TestMode {
+			return m, tea.Batch(
+				func() tea.Msg { return collectMockSystemCmd() },
+				func() tea.Msg { return collectMockDockerCmd() },
+				func() tea.Msg { return collectMockWeatherCmd() },
+			)
+		}
 		return m, tea.Batch(
 			func() tea.Msg { return collectSystemCmd(m.disks) },
 			func() tea.Msg { return collectDockerCmd() },
@@ -504,6 +524,12 @@ func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.stopFollowing()
 		m.detailLogs = nil
 		m.detailLogsErr = nil
+		if m.TestMode {
+			if m.detailStackName != "" {
+				return m, func() tea.Msg { return collectMockStackLogsCmd(m.detailStackName, 50) }
+			}
+			return m, func() tea.Msg { return collectMockLogsCmd(m.detailContainerID, 50) }
+		}
 		if m.detailStackName != "" {
 			return m, collectStackLogsCmd(m.dockerData.Containers, m.detailStackName, 50)
 		}
