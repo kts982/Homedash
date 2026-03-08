@@ -51,10 +51,11 @@ Full-screen container and stack logs, detail metadata, and quick actions without
 - **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
 - **Container search** - filter dashboard containers by name with `/`
 - **Deterministic test mode** - `--test-mode` flag for developers to run the TUI with synthetic data and frozen UI elements for stable testing and screenshots (internal helper)
+- **Focus-aware refresh** - background polling pauses automatically when the terminal loses focus on the dashboard, and resumes with an immediate refresh on refocus; detail/log views stay live regardless
 - **Notifications** - Docker state changes, disk warnings, and weather errors
 - **Weather** - current conditions via [wttr.in](https://wttr.in)
 - **Responsive layout** - works across narrow and wide terminals
-- **State persistence** - collapsed stack groups are remembered across sessions
+- **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
 - **Themes and mouse support** - Tokyo Night, Catppuccin, Dracula, plus click and scroll navigation
 
 ## Status
@@ -75,9 +76,7 @@ Expect ongoing UI and feature changes while the project settles.
 Near term:
 
 - packaging and release improvements
-- docs and screenshot refresh for stack detail and log workflows
-- stack-log usability polish
-- more test coverage around UI layout and Docker edge cases
+- screenshot refresh for stack detail and log workflows
 
 Not planned:
 
@@ -133,6 +132,10 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 | `docker.host` | string | `unix:///var/run/docker.sock` | Docker daemon socket |
 
 The Docker host can also be set via the `DOCKER_HOST` environment variable, which takes precedence over the config file.
+
+### State Persistence
+
+HomeDash saves UI state (collapsed stack groups) to `~/.config/homedash/state.json`. This file is managed automatically and does not need manual editing. The state path is not configurable.
 
 ### Minimal Config
 
@@ -198,7 +201,7 @@ Selecting `View Stack Logs` from the stack quick-action menu opens a merged stac
 wttr.in JSON API               ──5min──>  Weather panel
 ```
 
-Most data collection is tick-driven through [Bubble Tea](https://github.com/charmbracelet/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses streaming goroutines tied to the active container or stack detail view.
+Most data collection is tick-driven through [Bubble Tea](https://charm.land/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses streaming goroutines tied to the active container or stack detail view. Background polling pauses when the terminal loses focus on the dashboard and resumes on refocus.
 
 Containers are grouped by the `com.docker.compose.project` label, so any compose-based setup works automatically. Standalone containers appear ungrouped.
 
@@ -218,10 +221,9 @@ internal/ui/            Bubble Tea UI layer
 ## Built With
 
 - [Go](https://go.dev) — language
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
-- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — terminal styling
-- [bubbletea-overlay](https://github.com/rmhubbert/bubbletea-overlay) — popup compositing
+- [Bubble Tea v2](https://charm.land/bubbletea) — TUI framework
+- [Bubbles v2](https://charm.land/bubbles) — TUI components
+- [Lip Gloss v2](https://charm.land/lipgloss) — terminal styling and layout compositing
 
 ## Troubleshooting
 
