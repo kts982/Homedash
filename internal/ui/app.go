@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -872,22 +873,143 @@ func (m Model) renderQuickMenu(base string) string {
 		BorderForeground(styles.BorderFocus).
 		Background(styles.BgPanel).
 		Foreground(styles.TextPrimary).
-		Width(menuInner+2).
+		Width(menuInner + 4). // v2: Width includes borders(2) + padding(2)
 		Padding(0, 1).
 		Render(body)
 
 	popupW := lipgloss.Width(popup)
 	popupH := lipgloss.Height(popup)
 
-	bgLayer := lipgloss.NewLayer(base).X(0).Y(0).Z(0)
-	fgLayer := lipgloss.NewLayer(popup).
-		X((baseW - popupW) / 2).
-		Y((baseH - popupH) / 2).
-		Z(1)
+	// Manual overlay — Canvas/Layer API loses background content.
+	return overlayCenter(base, popup, baseW, baseH, popupW, popupH)
+}
 
-	canvas := lipgloss.NewCanvas(baseW, baseH)
-	canvas.Compose(bgLayer).Compose(fgLayer)
-	return canvas.Render()
+// overlayCenter places fg centered over bg by replacing lines in the
+// background with foreground content. ANSI styles are preserved for both
+// the visible background rows and the foreground overlay.
+func overlayCenter(bg, fg string, bgW, bgH, fgW, fgH int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+
+	// Pad bg to expected height
+	for len(bgLines) < bgH {
+		bgLines = append(bgLines, strings.Repeat(" ", bgW))
+	}
+
+	startX := (bgW - fgW) / 2
+	startY := (bgH - fgH) / 2
+	if startX < 0 {
+		startX = 0
+	}
+	if startY < 0 {
+		startY = 0
+	}
+
+	for i, fgLine := range fgLines {
+		bgIdx := startY + i
+		if bgIdx >= len(bgLines) {
+			break
+		}
+		bgLine := bgLines[bgIdx]
+		bgLines[bgIdx] = spliceLineAt(bgLine, fgLine, startX, bgW)
+	}
+
+	return strings.Join(bgLines[:bgH], "\n")
+}
+
+// spliceLineAt replaces a segment of a background line with a foreground string
+// at the given cell offset, preserving ANSI sequences. It pads the background
+// line if it is shorter than the required width.
+func spliceLineAt(bgLine, fgLine string, startX, totalW int) string {
+	// Use lipgloss truncation/padding to extract left and right parts
+	left := lipgloss.NewStyle().Inline(true).MaxWidth(startX).Render(bgLine)
+	leftW := lipgloss.Width(left)
+	if leftW < startX {
+		left += strings.Repeat(" ", startX-leftW)
+	}
+
+	fgW := lipgloss.Width(fgLine)
+	rightStart := startX + fgW
+	rightW := totalW - rightStart
+	if rightW <= 0 {
+		return left + fgLine
+	}
+
+	// Extract the right portion of the background after the overlay
+	// We need to skip startX+fgW cells from the bgLine
+	right := extractRight(bgLine, rightStart, rightW)
+
+	return left + fgLine + right
+}
+
+// extractRight extracts cells from position startCell to fill width cells,
+// handling ANSI escape sequences.
+func extractRight(line string, startCell, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	// Render full line truncated to startCell+width, then take last width chars
+	full := lipgloss.NewStyle().Inline(true).MaxWidth(startCell + width).Render(line)
+	fullW := lipgloss.Width(full)
+
+	// Now we need just the last `width` cells. Since ANSI complicates slicing,
+	// render the line at startCell width to get what we need to skip, then
+	// use the difference.
+	if fullW <= startCell {
+		return strings.Repeat(" ", width)
+	}
+
+	// Simple approach: render two truncations and diff
+	skipPart := lipgloss.NewStyle().Inline(true).MaxWidth(startCell).Render(line)
+	skipW := lipgloss.Width(skipPart)
+
+	// The right part is everything after skipW cells in the full render
+	// Use ANSI-aware approach: strip the left portion by rendering at MaxWidth
+	rightPart := strings.Repeat(" ", width)
+	if fullW > skipW {
+		// Re-render with padding to extract right portion
+		rightPart = lipgloss.NewStyle().Inline(true).MaxWidth(startCell + width).Render(line)
+		// Strip left portion character by character
+		rightPart = stripLeftCells(rightPart, startCell)
+		rw := lipgloss.Width(rightPart)
+		if rw < width {
+			rightPart += strings.Repeat(" ", width-rw)
+		}
+	}
+	return rightPart
+}
+
+// stripLeftCells removes the first n visible cells from a styled string,
+// preserving ANSI sequences that apply to the remaining text.
+func stripLeftCells(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	cells := 0
+	inEscape := false
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' {
+			inEscape = true
+			i++
+			continue
+		}
+		if inEscape {
+			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') {
+				inEscape = false
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		_ = r
+		cells++
+		i += size
+		if cells >= n {
+			return s[i:]
+		}
+	}
+	return ""
 }
 
 func (m Model) isNarrow() bool {

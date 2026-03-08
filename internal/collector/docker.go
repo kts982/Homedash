@@ -577,10 +577,11 @@ type stackLogTarget struct {
 }
 
 type stackLogEntry struct {
-	line         string
-	timestamp    time.Time
-	hasTimestamp bool
-	order        int
+	line          string
+	timestamp     time.Time
+	hasTimestamp  bool
+	containerName string
+	order         int
 }
 
 func FetchStackLogs(containers []Container, stackName string, tail int) ([]string, error) {
@@ -622,10 +623,11 @@ func FetchStackLogs(containers []Container, stackName string, tail int) ([]strin
 			prefixed := prefixStackLogLine(result.target.Name, line)
 			ts, ok := parseDockerLogTimestamp(prefixed)
 			entries = append(entries, stackLogEntry{
-				line:         prefixed,
-				timestamp:    ts,
-				hasTimestamp: ok,
-				order:        order,
+				line:          prefixed,
+				timestamp:     ts,
+				hasTimestamp:  ok,
+				containerName: result.target.Name,
+				order:         order,
 			})
 			order++
 		}
@@ -641,6 +643,10 @@ func FetchStackLogs(containers []Container, stackName string, tail int) ([]strin
 			}
 		case left.hasTimestamp != right.hasTimestamp:
 			return left.hasTimestamp
+		}
+		// Deterministic tiebreaker: container name then line order
+		if left.containerName != right.containerName {
+			return left.containerName < right.containerName
 		}
 		return left.order < right.order
 	})
