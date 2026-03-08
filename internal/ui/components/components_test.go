@@ -3,6 +3,7 @@ package components
 import (
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -13,6 +14,22 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string {
 	return ansiRE.ReplaceAllString(s, "")
+}
+
+func TestPanelRenderedDimensions(t *testing.T) {
+	width, height := 80, 20
+	out := Panel("TEST", "hello", width, height, false)
+
+	lines := strings.Split(out, "\n")
+	if len(lines) != height {
+		t.Errorf("Panel line count = %d, want %d", len(lines), height)
+	}
+	for i, line := range lines {
+		w := lipgloss.Width(line)
+		if w != width {
+			t.Errorf("Panel line %d width = %d, want %d", i, w, width)
+		}
+	}
 }
 
 func TestNewRingBufferCreatesEmptyBuffer(t *testing.T) {

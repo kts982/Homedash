@@ -22,8 +22,8 @@ func Panel(title, content string, width, height int, focused bool) string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Foreground(styles.TextPrimary).
-		Width(width - 2). // account for border
-		Height(height - 2).
+		Width(width).  // v2: Width/Height include borders
+		Height(height).
 		Padding(0, 1)
 
 	titleStr := titleStyle.Render(" " + title + " ")
