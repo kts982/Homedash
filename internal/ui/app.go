@@ -81,6 +81,7 @@ type Model struct {
 
 	weatherRetries int
 	refreshing     bool
+	focused        bool
 
 	collapsedStacks map[string]bool
 	displayItems    []DisplayItem
@@ -209,6 +210,7 @@ func NewModel(options ModelOptions) Model {
 		diskWarned:             make(map[string]bool),
 		shownWarnings:          make(map[string]bool),
 		TestMode:               options.TestMode,
+		focused:                true,
 	}
 }
 
@@ -306,6 +308,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.FocusMsg:
+		m.focused = true
+		if m.viewMode == ViewDashboard && !m.TestMode {
+			return m, tea.Batch(
+				func() tea.Msg { return collectSystemCmd(m.disks) },
+				func() tea.Msg { return collectDockerCmd() },
+				func() tea.Msg { return collectWeatherCmd() },
+			)
+		}
+		return m, nil
+	case tea.BlurMsg:
+		m.focused = false
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -358,6 +373,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.systemErr = msg.Err
 		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
 			return m, tea.Batch(notifCmds...)
 		}
 		cmds := append(notifCmds, systemTickCmd(m.disks, m.systemRefreshInterval))
@@ -444,6 +462,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recalcLayout()
 		}
 		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
 			return m, tea.Batch(notifCmds...)
 		}
 		cmds := append(notifCmds, dockerTickCmd(m.dockerRefreshInterval))
@@ -551,6 +572,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.TestMode {
 				return m, nil
 			}
+			if !m.focused && m.viewMode == ViewDashboard {
+				return m, nil
+			}
 			return m, weatherTickCmd(m.weatherRefreshInterval)
 		}
 		m.weatherErr = msg.Err
@@ -562,6 +586,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.TestMode {
+			return m, tea.Batch(notifCmds...)
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
 			return m, tea.Batch(notifCmds...)
 		}
 		if m.weatherRetries < 3 {
@@ -1023,6 +1050,7 @@ func (m Model) View() tea.View {
 	v := tea.NewView(s)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true
 
 	title := "HomeDash"
 	if m.systemData.Hostname != "" {
@@ -1167,7 +1195,7 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		m.actionResult,
 		m.width,
 	)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, !m.focused && m.viewMode == ViewDashboard, m.width)
 	notifBar := renderNotificationBar(&m.notifications, m.width)
 
 	bottomBars := []string{previewBar}
