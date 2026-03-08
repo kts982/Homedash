@@ -1101,3 +1101,75 @@ func TestFollowModeAutoScrollsToBottom(t *testing.T) {
 		t.Fatalf("detailScrollOffset = %d, want %d (should autoscroll to bottom)", m.detailScrollOffset, expectedScroll)
 	}
 }
+
+func TestFollowStreamEndSchedulesRestart(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.logFollowing = true
+	m.logFollowSeq = 1
+	m.logFollowCh = make(chan string, 1)
+	m.TestMode = false
+
+	// Stream ends (container restart)
+	msg := LogFollowLineMsg{Done: true, Seq: 1}
+	updated, cmd := m.Update(msg)
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.logFollowing {
+		t.Fatal("logFollowing should be false after stream end")
+	}
+	if cmd == nil {
+		t.Fatal("should return a cmd to schedule restart")
+	}
+}
+
+func TestFollowRestartMsgRestartsFollowing(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogs = []string{"existing log"}
+	m.logFollowing = false
+	m.TestMode = false
+
+	updated, cmd := m.Update(followRestartMsg{})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if !m.logFollowing {
+		t.Fatal("logFollowing should be true after followRestartMsg")
+	}
+	if cmd == nil {
+		t.Fatal("should return a cmd to start the follow stream")
+	}
+}
+
+func TestFollowRestartMsgIgnoredWhenNotInDetailView(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDashboard
+	m.logFollowing = false
+
+	updated, cmd := m.Update(followRestartMsg{})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.logFollowing {
+		t.Fatal("logFollowing should remain false when not in detail view")
+	}
+	if cmd != nil {
+		t.Fatal("should return nil cmd when not in detail view")
+	}
+}
