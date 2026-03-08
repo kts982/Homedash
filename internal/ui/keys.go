@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/state"
 )
@@ -65,7 +65,7 @@ func (m *Model) enterStackDetailView(stackName string) tea.Cmd {
 	return m.startFollowing()
 }
 
-func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		if m.collapseSeq > m.lastSavedSeq {
@@ -97,7 +97,7 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	return handleDashboardKey(msg, m)
 }
 
-func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleQuickMenuKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	items := m.currentQuickMenuItems()
 	if len(items) == 0 {
 		m.closeQuickMenu()
@@ -109,7 +109,7 @@ func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc", " ":
+	case "esc", " ", "space":
 		m.closeQuickMenu()
 	case "j", "down":
 		if m.quickMenuIndex < len(items)-1 {
@@ -212,7 +212,7 @@ func stackActionAvailable(item DisplayItem, action string) bool {
 	}
 }
 
-func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first when an action is pending
 	if m.confirmAction != "" && (m.dashboardActionContainerID != "" || m.dashboardActionStackName != "") {
 		switch msg.String() {
@@ -276,7 +276,7 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-	case " ":
+	case " ", "space":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
 			if item.Kind == DisplayGroup {
@@ -357,98 +357,106 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.focusedPanel == PanelContainers {
-			m.scrollOffset -= 3
-			if m.scrollOffset < 0 {
-				m.scrollOffset = 0
+	mm := msg.Mouse()
+
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mm.Button {
+		case tea.MouseWheelUp:
+			if m.focusedPanel == PanelContainers {
+				m.scrollOffset -= 3
+				if m.scrollOffset < 0 {
+					m.scrollOffset = 0
+				}
+				// Keep selectedIndex within visible range
+				if m.selectedIndex >= m.scrollOffset+m.containerRows {
+					m.selectedIndex = m.scrollOffset + m.containerRows - 1
+				}
+				if m.selectedIndex < m.scrollOffset {
+					m.selectedIndex = m.scrollOffset
+				}
 			}
-			// Keep selectedIndex within visible range
-			if m.selectedIndex >= m.scrollOffset+m.containerRows {
-				m.selectedIndex = m.scrollOffset + m.containerRows - 1
-			}
-			if m.selectedIndex < m.scrollOffset {
-				m.selectedIndex = m.scrollOffset
+		case tea.MouseWheelDown:
+			if m.focusedPanel == PanelContainers {
+				maxOffset := len(m.displayItems) - m.containerRows
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				m.scrollOffset += 3
+				if m.scrollOffset > maxOffset {
+					m.scrollOffset = maxOffset
+				}
+				// Keep selectedIndex within visible range
+				if m.selectedIndex < m.scrollOffset {
+					m.selectedIndex = m.scrollOffset
+				}
+				if m.selectedIndex >= m.scrollOffset+m.containerRows && m.containerRows > 0 {
+					m.selectedIndex = m.scrollOffset + m.containerRows - 1
+				}
 			}
 		}
-	case tea.MouseButtonWheelDown:
-		if m.focusedPanel == PanelContainers {
-			maxOffset := len(m.displayItems) - m.containerRows
-			if maxOffset < 0 {
-				maxOffset = 0
+	case tea.MouseClickMsg:
+		if mm.Button == tea.MouseLeft {
+			// Click on container row
+			row := mm.Y - m.containerStartY
+			if row < 0 || row >= m.containerRows {
+				return m, nil
 			}
-			m.scrollOffset += 3
-			if m.scrollOffset > maxOffset {
-				m.scrollOffset = maxOffset
+			idx := row + m.scrollOffset
+			if idx < 0 || idx >= len(m.displayItems) {
+				return m, nil
 			}
-			// Keep selectedIndex within visible range
-			if m.selectedIndex < m.scrollOffset {
-				m.selectedIndex = m.scrollOffset
+			m.focusedPanel = PanelContainers
+			item := m.displayItems[idx]
+			now := time.Now()
+			isDoubleClick := idx == m.lastClickIndex && now.Sub(m.lastClickTime) < 400*time.Millisecond
+			m.lastClickTime = now
+			m.lastClickIndex = idx
+			if item.Kind == DisplayGroup {
+				// Click on group header toggles collapse
+				m.selectedIndex = idx
+				m.trackSelection()
+				m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
+				m.rebuildDisplayItems()
+				m.ensureVisible()
+				if m.searchInput.Value() == "" {
+					m.collapseSeq++
+					return m, collapseSaveTickCmd(m.collapseSeq)
+				}
+			} else if item.Kind == DisplayContainer && item.Container != nil {
+				m.selectedIndex = idx
+				m.trackSelection()
+				if isDoubleClick {
+					// Double-click opens detail view
+					return m, m.enterDetailView(item.Container)
+				}
+			} else {
+				m.selectedIndex = idx
 			}
-			if m.selectedIndex >= m.scrollOffset+m.containerRows && m.containerRows > 0 {
-				m.selectedIndex = m.scrollOffset + m.containerRows - 1
-			}
-		}
-	case tea.MouseButtonLeft:
-		if msg.Action != tea.MouseActionPress {
-			return m, nil
-		}
-		// Click on container row
-		row := msg.Y - m.containerStartY
-		if row < 0 || row >= m.containerRows {
-			return m, nil
-		}
-		idx := row + m.scrollOffset
-		if idx < 0 || idx >= len(m.displayItems) {
-			return m, nil
-		}
-		m.focusedPanel = PanelContainers
-		item := m.displayItems[idx]
-		now := time.Now()
-		isDoubleClick := idx == m.lastClickIndex && now.Sub(m.lastClickTime) < 400*time.Millisecond
-		m.lastClickTime = now
-		m.lastClickIndex = idx
-		if item.Kind == DisplayGroup {
-			// Click on group header toggles collapse
-			m.selectedIndex = idx
-			m.trackSelection()
-			m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
-			m.rebuildDisplayItems()
-			m.ensureVisible()
-			if m.searchInput.Value() == "" {
-				m.collapseSeq++
-				return m, collapseSaveTickCmd(m.collapseSeq)
-			}
-		} else if item.Kind == DisplayContainer && item.Container != nil {
-			m.selectedIndex = idx
-			m.trackSelection()
-			if isDoubleClick {
-				// Double-click opens detail view
-				return m, m.enterDetailView(item.Container)
-			}
-		} else {
-			m.selectedIndex = idx
 		}
 	}
 	return m, nil
 }
 
 func handleDetailMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		m.detailScrollOffset -= 3
-		if m.detailScrollOffset < 0 {
-			m.detailScrollOffset = 0
-		}
-	case tea.MouseButtonWheelDown:
-		maxScroll := len(m.detailLogs) - m.detailLogRows
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		m.detailScrollOffset += 3
-		if m.detailScrollOffset > maxScroll {
-			m.detailScrollOffset = maxScroll
+	mm := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mm.Button {
+		case tea.MouseWheelUp:
+			m.detailScrollOffset -= 3
+			if m.detailScrollOffset < 0 {
+				m.detailScrollOffset = 0
+			}
+		case tea.MouseWheelDown:
+			maxScroll := len(m.detailLogs) - m.detailLogRows
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			m.detailScrollOffset += 3
+			if m.detailScrollOffset > maxScroll {
+				m.detailScrollOffset = maxScroll
+			}
 		}
 	}
 	return m, nil
@@ -470,7 +478,7 @@ func detailPageStep(m *Model) int {
 	return step
 }
 
-func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first
 	if m.confirmAction != "" {
 		switch msg.String() {

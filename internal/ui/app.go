@@ -7,16 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/config"
 	"github.com/kostas/homedash/internal/state"
 	"github.com/kostas/homedash/internal/ui/components"
 	"github.com/kostas/homedash/internal/ui/panels"
 	"github.com/kostas/homedash/internal/ui/styles"
-	overlay "github.com/rmhubbert/bubbletea-overlay"
 )
 
 type ViewMode int
@@ -182,14 +181,18 @@ func NewModel(options ModelOptions) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Filter containers..."
 	ti.Prompt = " / "
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Secondary)
-	ti.TextStyle = lipgloss.NewStyle().Foreground(styles.TextPrimary)
+	s := textinput.DefaultDarkStyles()
+	s.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
+	s.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
+	ti.SetStyles(s)
 
 	lsi := textinput.New()
 	lsi.Placeholder = "Search logs..."
 	lsi.Prompt = " / "
-	lsi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Secondary)
-	lsi.TextStyle = lipgloss.NewStyle().Foreground(styles.TextPrimary)
+	ls := textinput.DefaultDarkStyles()
+	ls.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
+	ls.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
+	lsi.SetStyles(ls)
 
 	return Model{
 		cpuHistory:             components.NewRingBuffer(60),
@@ -242,7 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle key events while log search input is focused
 	if m.logSearchActive {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 			switch keyMsg.String() {
 			case "enter":
 				m.logSearchActive = false
@@ -272,7 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle key events while search input is focused
 	if m.filtering {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 			switch keyMsg.String() {
 			case "enter":
 				m.filtering = false
@@ -308,8 +311,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.recalcLayout()
 		return m, nil
-
 	case tea.MouseMsg:
+		m.refreshing = false
 		if m.viewMode == ViewDetail {
 			return handleDetailMouse(msg, &m)
 		}
@@ -318,7 +321,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return handleKey(msg, &m)
 
 	case SystemDataMsg:
@@ -719,13 +722,6 @@ func stackQuickMenuItems(running, stopped int) []quickMenuItem {
 	return items
 }
 
-// viewString wraps a pre-rendered string as a tea.Model for use with overlay.
-type viewString struct{ s string }
-
-func (v *viewString) Init() tea.Cmd                       { return nil }
-func (v *viewString) Update(tea.Msg) (tea.Model, tea.Cmd) { return v, nil }
-func (v *viewString) View() string                        { return v.s }
-
 func (m Model) currentQuickMenuItems() []quickMenuItem {
 	if stack := m.quickMenuStackPreview(); stack != nil {
 		return stackQuickMenuItems(stack.RunningCount, stack.StoppedCount)
@@ -743,6 +739,7 @@ func (m Model) renderQuickMenu(base string) string {
 	}
 
 	baseW := lipgloss.Width(base)
+	baseH := lipgloss.Height(base)
 
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
@@ -823,10 +820,18 @@ func (m Model) renderQuickMenu(base string) string {
 		Padding(0, 1).
 		Render(body)
 
-	bg := &viewString{s: base}
-	fg := &viewString{s: popup}
-	ov := overlay.New(fg, bg, overlay.Center, overlay.Center, 0, 0)
-	return ov.View()
+	popupW := lipgloss.Width(popup)
+	popupH := lipgloss.Height(popup)
+
+	bgLayer := lipgloss.NewLayer(base).X(0).Y(0).Z(0)
+	fgLayer := lipgloss.NewLayer(popup).
+		X((baseW - popupW) / 2).
+		Y((baseH - popupH) / 2).
+		Z(1)
+
+	canvas := lipgloss.NewCanvas(baseW, baseH)
+	canvas.Compose(bgLayer).Compose(fgLayer)
+	return canvas.Render()
 }
 
 func (m Model) isNarrow() bool {
@@ -1004,16 +1009,28 @@ func (m *Model) rebuildDisplayItems() {
 	m.ensureVisible()
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.width == 0 {
-		return "Loading..."
+		return tea.NewView("Loading...")
 	}
+	var s string
 	switch m.viewMode {
 	case ViewDetail:
-		return m.renderDetail()
+		s = m.renderDetail()
 	default:
-		return m.renderDashboard()
+		s = m.renderDashboard()
 	}
+	v := tea.NewView(s)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+
+	title := "HomeDash"
+	if m.systemData.Hostname != "" {
+		title += " - " + m.systemData.Hostname
+	}
+	v.WindowTitle = title
+
+	return v
 }
 
 func (m Model) renderDetail() string {
