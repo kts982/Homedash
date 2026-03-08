@@ -172,6 +172,94 @@ func TestIntegration_StartupDisplayItemsStructure(t *testing.T) {
 
 // --- Test 2: Dashboard filtering ---
 
+// TestIntegration_FilterTypedInputPath exercises the real user-input wiring:
+// '/' to focus → typed runes through Update() → textinput updates → rebuild →
+// Enter to confirm → Esc to clear. This verifies the full filtering pipeline
+// including the textinput component, not just direct SetValue.
+func TestIntegration_FilterTypedInputPath(t *testing.T) {
+	m := newTestModeModel(t)
+
+	// All 5 items visible initially
+	if len(m.displayItems) != 5 {
+		t.Fatalf("initial displayItems = %d, want 5", len(m.displayItems))
+	}
+
+	// Press '/' to activate filter mode
+	m, _ = applyKey(m, "/")
+	if !m.filtering {
+		t.Fatal("filtering = false after '/'")
+	}
+
+	// Type "beta" character by character through Update()
+	for _, ch := range "beta" {
+		m, _ = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+	}
+
+	// The textinput should have the typed value
+	if got := m.searchInput.Value(); got != "beta" {
+		t.Fatalf("searchInput.Value() = %q, want %q", got, "beta")
+	}
+
+	// Display items should be filtered to infra group + service-beta
+	if len(m.displayItems) != 2 {
+		t.Fatalf("filtered displayItems = %d, want 2", len(m.displayItems))
+	}
+	if m.displayItems[1].Container == nil || m.displayItems[1].Container.Name != "service-beta" {
+		t.Fatal("filtered container should be service-beta")
+	}
+
+	// Press Enter to confirm and exit filter mode
+	m, _ = applyKey(m, "enter")
+	if m.filtering {
+		t.Fatal("filtering = true after Enter, want false")
+	}
+	// Filter value should persist after Enter
+	if m.searchInput.Value() != "beta" {
+		t.Fatalf("searchInput = %q after Enter, want %q", m.searchInput.Value(), "beta")
+	}
+	// Items should still be filtered
+	if len(m.displayItems) != 2 {
+		t.Fatalf("displayItems after Enter = %d, want 2 (filter persists)", len(m.displayItems))
+	}
+
+	// Press Esc on dashboard to clear the filter
+	m.focusedPanel = PanelContainers
+	m, _ = applyKey(m, "esc")
+	if m.searchInput.Value() != "" {
+		t.Fatalf("searchInput = %q after Esc, want empty", m.searchInput.Value())
+	}
+	if len(m.displayItems) != 5 {
+		t.Fatalf("displayItems after Esc = %d, want 5 (all visible)", len(m.displayItems))
+	}
+}
+
+// TestIntegration_FilterEscDuringTyping tests pressing Esc while still in
+// filtering mode (textinput focused) — should clear and exit filter.
+func TestIntegration_FilterEscDuringTyping(t *testing.T) {
+	m := newTestModeModel(t)
+
+	// Activate filter and type partial text
+	m, _ = applyKey(m, "/")
+	for _, ch := range "al" {
+		m, _ = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+	}
+	if m.searchInput.Value() != "al" {
+		t.Fatalf("searchInput = %q, want %q", m.searchInput.Value(), "al")
+	}
+
+	// Esc while filtering should clear the input and restore all items
+	m, _ = applyKey(m, "esc")
+	if m.filtering {
+		t.Fatal("filtering should be false after Esc")
+	}
+	if m.searchInput.Value() != "" {
+		t.Fatalf("searchInput = %q after Esc, want empty", m.searchInput.Value())
+	}
+	if len(m.displayItems) != 5 {
+		t.Fatalf("displayItems = %d after Esc, want 5", len(m.displayItems))
+	}
+}
+
 func TestIntegration_FilterNarrowsList(t *testing.T) {
 	m := newTestModeModel(t)
 
