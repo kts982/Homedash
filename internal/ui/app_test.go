@@ -352,6 +352,52 @@ func TestHandleDetailKeyPagesUp(t *testing.T) {
 	}
 }
 
+func TestHandleDetailKeyRefreshRestartsFollowForStack(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailStackName = "monitoring"
+	m.detailLogs = []string{"old log line 1", "old log line 2"}
+	m.detailScrollOffset = 5
+	m.logFollowing = true
+	// Not in test mode — the live path should restart following
+	m.TestMode = false
+
+	updatedModel, cmd := handleDetailKey(tea.KeyPressMsg{Text: "l"}, &m)
+	updated := updatedModel.(*Model)
+
+	if !updated.logFollowing {
+		t.Fatal("logFollowing should be true after refresh (stream restart)")
+	}
+	if updated.detailLogs != nil {
+		t.Fatal("detailLogs should be nil after refresh (cleared for stream)")
+	}
+	if updated.detailScrollOffset != 0 {
+		t.Fatal("detailScrollOffset should be 0 after refresh")
+	}
+	if cmd == nil {
+		t.Fatal("refresh should return a cmd (follow stream)")
+	}
+}
+
+func TestHandleDetailKeyRefreshBatchInTestMode(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailStackName = "monitoring"
+	m.detailLogs = []string{"old log line"}
+	m.TestMode = true
+
+	updatedModel, cmd := handleDetailKey(tea.KeyPressMsg{Text: "l"}, &m)
+	updated := updatedModel.(*Model)
+
+	// Test mode uses batch fetch, not streaming
+	if updated.logFollowing {
+		t.Fatal("logFollowing should be false in test mode (batch path)")
+	}
+	if cmd == nil {
+		t.Fatal("refresh should return a cmd (batch fetch)")
+	}
+}
+
 func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	m := newTestModel()
 	m.width = 60
