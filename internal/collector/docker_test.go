@@ -230,6 +230,58 @@ func TestFetchStackLogsMergesAndPrefixesByTimestamp(t *testing.T) {
 	}
 }
 
+func TestFetchStackLogsEqualTimestampsDeterministic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Both containers log at the exact same timestamps
+		switch r.URL.Path {
+		case "/v1.47/containers/beta/logs":
+			_, _ = w.Write([]byte(strings.Join([]string{
+				"2026-03-06T12:00:01Z beta line1",
+				"2026-03-06T12:00:01Z beta line2",
+			}, "\n") + "\n"))
+		case "/v1.47/containers/alpha/logs":
+			_, _ = w.Write([]byte(strings.Join([]string{
+				"2026-03-06T12:00:01Z alpha line1",
+				"2026-03-06T12:00:01Z alpha line2",
+			}, "\n") + "\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	saveDockerState(t)
+	SetDockerHost(server.URL)
+
+	containers := []Container{
+		{ID: "beta", Name: "beta", Stack: "app"},
+		{ID: "alpha", Name: "alpha", Stack: "app"},
+	}
+
+	// Run multiple times to verify determinism despite goroutine scheduling
+	want := []string{
+		"2026-03-06T12:00:01Z [alpha] alpha line1",
+		"2026-03-06T12:00:01Z [alpha] alpha line2",
+		"2026-03-06T12:00:01Z [beta] beta line1",
+		"2026-03-06T12:00:01Z [beta] beta line2",
+	}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		got, err := FetchStackLogs(containers, "app", 50)
+		if err != nil {
+			t.Fatalf("attempt %d: FetchStackLogs() error: %v", attempt, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("attempt %d: FetchStackLogs() = %#v, want %#v", attempt, got, want)
+		}
+	}
+}
+
 func TestStreamStackLogsPrefixesContainerNames(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
