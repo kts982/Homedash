@@ -366,7 +366,7 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 
 	countLines := func(s string) int {
@@ -407,7 +407,7 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(topRow, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
 	if expectedRows < 0 {
