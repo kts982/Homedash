@@ -804,3 +804,130 @@ func TestIntegration_MockDataConsistency(t *testing.T) {
 		t.Fatalf("mock location = %q, want Synthetic Location", weatherMsg.Data.Location)
 	}
 }
+
+func TestFocus_BlurPausesDashboardTicks(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false // Enable ticks for this test logic
+
+	// 1. Lose focus
+	m, _ = applyMsg(m, tea.BlurMsg{})
+	if m.focused {
+		t.Fatal("Expected focused = false after BlurMsg")
+	}
+
+	// 2. Simulate data arrival (System)
+	// It should NOT produce a new tick command because we are blurred on dashboard
+	_, cmd := m.Update(SystemDataMsg{Data: m.systemData})
+	if cmd != nil {
+		t.Error("Expected no tick command after SystemDataMsg while blurred on dashboard")
+	}
+
+	// 3. Simulate data arrival (Docker)
+	_, cmd = m.Update(DockerDataMsg{Data: m.dockerData})
+	if cmd != nil {
+		t.Error("Expected no tick command after DockerDataMsg while blurred on dashboard")
+	}
+
+	// 4. Simulate data arrival (Weather)
+	_, cmd = m.Update(WeatherDataMsg{Data: m.weatherData})
+	if cmd != nil {
+		t.Error("Expected no tick command after WeatherDataMsg while blurred on dashboard")
+	}
+}
+
+func TestFocus_FocusResumesDashboardTicks(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Lose focus
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 2. Gain focus
+	// It should return a batch command to refresh all data immediately
+	m, cmd := applyMsg(m, tea.FocusMsg{})
+	if !m.focused {
+		t.Fatal("Expected focused = true after FocusMsg")
+	}
+	if cmd == nil {
+		t.Fatal("Expected batch refresh command after FocusMsg")
+	}
+
+	// 3. Simulate data arrival (System) after focus
+	// It should now produce a new tick command because we are focused
+	_, cmd = m.Update(SystemDataMsg{Data: m.systemData})
+	if cmd == nil {
+		t.Error("Expected tick command after SystemDataMsg while focused")
+	}
+}
+
+func TestFocus_BlurDoesNotPauseDetailTicks(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Enter detail view
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+
+	// 2. Lose focus
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 3. Simulate data arrival (Docker)
+	// It should STILL produce a tick command because we are in detail view
+	_, cmd := m.Update(DockerDataMsg{Data: m.dockerData})
+	if cmd == nil {
+		t.Error("Expected tick command after DockerDataMsg while blurred in detail view")
+	}
+}
+
+func TestFocus_PendingTickDiscardedWhileBlurred(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Lose focus
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 2. Simulate a pending tick firing (SystemTickMsg arrives while blurred)
+	// It should NOT trigger a collection command
+	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
+	if cmd != nil {
+		t.Error("Expected no collection command when SystemTickMsg arrives while blurred on dashboard")
+	}
+
+	// 3. Same for Docker and Weather
+	_, cmd = m.Update(DockerTickMsg{Epoch: 0})
+	if cmd != nil {
+		t.Error("Expected no collection command when DockerTickMsg arrives while blurred on dashboard")
+	}
+	_, cmd = m.Update(WeatherTickMsg{Epoch: 0})
+	if cmd != nil {
+		t.Error("Expected no collection command when WeatherTickMsg arrives while blurred on dashboard")
+	}
+}
+
+func TestFocus_OldPendingTickDiscardedAfterRefocus(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Lose focus (epoch stays 0)
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 2. Gain focus (epoch increments to 1)
+	m, _ = applyMsg(m, tea.FocusMsg{})
+	if m.tickEpoch != 1 {
+		t.Fatalf("tickEpoch = %d, want 1 after refocus", m.tickEpoch)
+	}
+
+	// 3. Simulate an OLD pending tick arriving (Epoch 0)
+	// It should be discarded even though we are focused now
+	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
+	if cmd != nil {
+		t.Error("Expected old SystemTickMsg (Epoch 0) to be discarded after refocus (Epoch 1)")
+	}
+
+	// 4. Simulate a NEW tick arriving (Epoch 1)
+	// It should be processed
+	_, cmd = m.Update(SystemTickMsg{Epoch: 1})
+	if cmd == nil {
+		t.Error("Expected new SystemTickMsg (Epoch 1) to be processed")
+	}
+}

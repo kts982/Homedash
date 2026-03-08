@@ -29,27 +29,27 @@ func collectWeatherCmd() tea.Msg {
 	return WeatherDataMsg{Data: data, Err: err}
 }
 
-func systemTickCmd(disks []config.Disk, interval time.Duration) tea.Cmd {
+func systemTickCmd(disks []config.Disk, interval time.Duration, epoch uint64) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectSystemCmd(disks)
+		return SystemTickMsg{Epoch: epoch}
 	})
 }
 
-func dockerTickCmd(interval time.Duration) tea.Cmd {
+func dockerTickCmd(interval time.Duration, epoch uint64) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectDockerCmd()
+		return DockerTickMsg{Epoch: epoch}
 	})
 }
 
-func weatherTickCmd(interval time.Duration) tea.Cmd {
+func weatherTickCmd(interval time.Duration, epoch uint64) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectWeatherCmd()
+		return WeatherTickMsg{Epoch: epoch}
 	})
 }
 
-func weatherRetryCmd() tea.Cmd {
+func weatherRetryCmd(epoch uint64) tea.Cmd {
 	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
-		return collectWeatherCmd()
+		return WeatherTickMsg{Epoch: epoch}
 	})
 }
 

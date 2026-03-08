@@ -81,6 +81,8 @@ type Model struct {
 
 	weatherRetries int
 	refreshing     bool
+	focused        bool
+	tickEpoch      uint64
 
 	collapsedStacks map[string]bool
 	displayItems    []DisplayItem
@@ -209,6 +211,7 @@ func NewModel(options ModelOptions) Model {
 		diskWarned:             make(map[string]bool),
 		shownWarnings:          make(map[string]bool),
 		TestMode:               options.TestMode,
+		focused:                true,
 	}
 }
 
@@ -231,9 +234,9 @@ func (m Model) Init() tea.Cmd {
 	if !m.TestMode {
 		cmds = append(cmds,
 			// Start tick timers
-			systemTickCmd(m.disks, m.systemRefreshInterval),
-			dockerTickCmd(m.dockerRefreshInterval),
-			weatherTickCmd(m.weatherRefreshInterval),
+			systemTickCmd(m.disks, m.systemRefreshInterval, m.tickEpoch),
+			dockerTickCmd(m.dockerRefreshInterval, m.tickEpoch),
+			weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch),
 		)
 	}
 
@@ -306,6 +309,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.FocusMsg:
+		m.focused = true
+		if m.viewMode == ViewDashboard && !m.TestMode {
+			m.tickEpoch++
+			return m, tea.Batch(
+				func() tea.Msg { return collectSystemCmd(m.disks) },
+				func() tea.Msg { return collectDockerCmd() },
+				func() tea.Msg { return collectWeatherCmd() },
+			)
+		}
+		return m, nil
+	case tea.BlurMsg:
+		m.focused = false
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -323,6 +340,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return handleKey(msg, &m)
+
+	case SystemTickMsg:
+		if msg.Epoch != m.tickEpoch {
+			return m, nil
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectSystemCmd(m.disks) }
+
+	case DockerTickMsg:
+		if msg.Epoch != m.tickEpoch {
+			return m, nil
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectDockerCmd() }
+
+	case WeatherTickMsg:
+		if msg.Epoch != m.tickEpoch {
+			return m, nil
+		}
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectWeatherCmd() }
 
 	case SystemDataMsg:
 		m.refreshing = false
@@ -360,7 +404,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.TestMode {
 			return m, tea.Batch(notifCmds...)
 		}
-		cmds := append(notifCmds, systemTickCmd(m.disks, m.systemRefreshInterval))
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, tea.Batch(notifCmds...)
+		}
+		cmds := append(notifCmds, systemTickCmd(m.disks, m.systemRefreshInterval, m.tickEpoch))
 		return m, tea.Batch(cmds...)
 
 	case DockerDataMsg:
@@ -446,7 +493,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.TestMode {
 			return m, tea.Batch(notifCmds...)
 		}
-		cmds := append(notifCmds, dockerTickCmd(m.dockerRefreshInterval))
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, tea.Batch(notifCmds...)
+		}
+		cmds := append(notifCmds, dockerTickCmd(m.dockerRefreshInterval, m.tickEpoch))
 		return m, tea.Batch(cmds...)
 
 	case ContainerLogsMsg:
@@ -551,7 +601,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.TestMode {
 				return m, nil
 			}
-			return m, weatherTickCmd(m.weatherRefreshInterval)
+			if !m.focused && m.viewMode == ViewDashboard {
+				return m, nil
+			}
+			return m, weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch)
 		}
 		m.weatherErr = msg.Err
 		var notifCmds []tea.Cmd
@@ -564,13 +617,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.TestMode {
 			return m, tea.Batch(notifCmds...)
 		}
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, tea.Batch(notifCmds...)
+		}
 		if m.weatherRetries < 3 {
 			m.weatherRetries++
-			cmds := append(notifCmds, weatherRetryCmd())
+			cmds := append(notifCmds, weatherRetryCmd(m.tickEpoch))
 			return m, tea.Batch(cmds...)
 		}
 		m.weatherRetries = 0
-		cmds := append(notifCmds, weatherTickCmd(m.weatherRefreshInterval))
+		cmds := append(notifCmds, weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch))
 		return m, tea.Batch(cmds...)
 	case CollapseSaveTickMsg:
 		if msg.Seq == m.collapseSeq {
@@ -1023,6 +1079,7 @@ func (m Model) View() tea.View {
 	v := tea.NewView(s)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true
 
 	title := "HomeDash"
 	if m.systemData.Hostname != "" {
@@ -1167,7 +1224,7 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		m.actionResult,
 		m.width,
 	)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, !m.focused && m.viewMode == ViewDashboard, m.width)
 	notifBar := renderNotificationBar(&m.notifications, m.width)
 
 	bottomBars := []string{previewBar}
