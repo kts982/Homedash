@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // newTestModeModel creates a Model in test-mode with a realistic terminal size
@@ -39,35 +39,33 @@ func applyKey(m Model, key string) (Model, tea.Cmd) {
 	return applyMsg(m, keyMsg(key))
 }
 
-// keyMsg constructs a tea.KeyMsg from a string representation.
-func keyMsg(key string) tea.KeyMsg {
+// keyMsg constructs a tea.KeyPressMsg from a string representation.
+func keyMsg(key string) tea.KeyPressMsg {
 	switch key {
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
+		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "shift+tab":
-		return tea.KeyMsg{Type: tea.KeyShiftTab}
+		return tea.KeyPressMsg{Text: "shift+tab"}
 	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
+		return tea.KeyPressMsg{Text: "ctrl+c"}
 	case "ctrl+d":
-		return tea.KeyMsg{Type: tea.KeyCtrlD}
+		return tea.KeyPressMsg{Text: "ctrl+d"}
 	case "ctrl+u":
-		return tea.KeyMsg{Type: tea.KeyCtrlU}
+		return tea.KeyPressMsg{Text: "ctrl+u"}
 	case " ":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}
+		return tea.KeyPressMsg{Text: "space"}
 	default:
-		if len(key) == 1 {
-			return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
-		}
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		return tea.KeyPressMsg{Text: key}
 	}
 }
 
 // stripANSIForTest removes ANSI escape sequences for easier assertion.
-func stripANSIForTest(s string) string {
+func stripANSIForTest(v tea.View) string {
+	s := v.Content
 	var out strings.Builder
 	inEscape := false
 	for _, r := range s {
@@ -121,10 +119,10 @@ func TestIntegration_StartupRenderStability(t *testing.T) {
 
 	// View should render without panic and produce non-empty output
 	view := m.View()
-	if view == "" {
+	if view.Content == "" {
 		t.Fatal("View() returned empty string")
 	}
-	if view == "Loading..." {
+	if view.Content == "Loading..." {
 		t.Fatal("View() still showing loading after data was fed")
 	}
 
@@ -192,7 +190,7 @@ func TestIntegration_FilterTypedInputPath(t *testing.T) {
 
 	// Type "beta" character by character through Update()
 	for _, ch := range "beta" {
-		m, _ = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+		m, _ = applyMsg(m, tea.KeyPressMsg{Text: string(ch)})
 	}
 
 	// The textinput should have the typed value
@@ -241,7 +239,7 @@ func TestIntegration_FilterEscDuringTyping(t *testing.T) {
 	// Activate filter and type partial text
 	m, _ = applyKey(m, "/")
 	for _, ch := range "al" {
-		m, _ = applyMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+		m, _ = applyMsg(m, tea.KeyPressMsg{Text: string(ch)})
 	}
 	if m.searchInput.Value() != "al" {
 		t.Fatalf("searchInput = %q, want %q", m.searchInput.Value(), "al")
@@ -321,7 +319,7 @@ func TestIntegration_FilterNoMatch(t *testing.T) {
 
 	// View should still render without panic
 	view := m.View()
-	if view == "" {
+	if view.Content == "" {
 		t.Fatal("View() returned empty with no matches")
 	}
 }
@@ -517,7 +515,7 @@ func TestIntegration_QuickMenuRunningContainer(t *testing.T) {
 
 	// View should render without panic
 	view := m.View()
-	if view == "" {
+	if view.Content == "" {
 		t.Fatal("View() empty with quick menu open")
 	}
 }
