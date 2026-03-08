@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 	"github.com/kts982/homedash/internal/collector"
 	"github.com/kts982/homedash/internal/ui/components"
 	"github.com/kts982/homedash/internal/ui/styles"
