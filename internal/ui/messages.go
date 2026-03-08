@@ -21,13 +21,13 @@ type WeatherDataMsg struct {
 }
 
 // SystemTickMsg is sent by the periodic timer to trigger system collection.
-type SystemTickMsg struct{}
+type SystemTickMsg struct{ Epoch uint64 }
 
 // DockerTickMsg is sent by the periodic timer to trigger Docker collection.
-type DockerTickMsg struct{}
+type DockerTickMsg struct{ Epoch uint64 }
 
 // WeatherTickMsg is sent by the periodic timer to trigger weather collection.
-type WeatherTickMsg struct{}
+type WeatherTickMsg struct{ Epoch uint64 }
 
 // ForceRefreshMsg triggers an immediate refresh of all data.
 type ForceRefreshMsg struct{}
