@@ -654,7 +654,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Auto-restart follow after a delay if still in detail view.
 			// This handles container restarts where the stream dies but
 			// the user wants to keep watching logs.
-			if m.viewMode == ViewDetail && !m.TestMode {
+			if m.viewMode == ViewDetail && m.detailStackName != "" && !m.TestMode {
 				return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
 					return followRestartMsg{}
 				})
@@ -686,8 +686,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
 	case followRestartMsg:
-		// Auto-restart follow if still in detail view and not already following
-		if m.viewMode == ViewDetail && !m.logFollowing {
+		// Auto-restart follow if still in stack detail view and not already following
+		if m.viewMode == ViewDetail && m.detailStackName != "" && !m.logFollowing {
 			return m, m.startFollowing()
 		}
 	}
