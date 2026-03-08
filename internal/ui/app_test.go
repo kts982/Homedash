@@ -1105,7 +1105,7 @@ func TestFollowModeAutoScrollsToBottom(t *testing.T) {
 func TestFollowStreamEndSchedulesRestart(t *testing.T) {
 	m := newTestModel()
 	m.viewMode = ViewDetail
-	m.detailContainerID = "abc"
+	m.detailStackName = "monitoring" // stack detail — auto-restart applies
 	m.logFollowing = true
 	m.logFollowSeq = 1
 	m.logFollowCh = make(chan string, 1)
@@ -1132,7 +1132,7 @@ func TestFollowStreamEndSchedulesRestart(t *testing.T) {
 func TestFollowRestartMsgRestartsFollowing(t *testing.T) {
 	m := newTestModel()
 	m.viewMode = ViewDetail
-	m.detailContainerID = "abc"
+	m.detailStackName = "monitoring" // stack detail
 	m.detailLogs = []string{"existing log"}
 	m.logFollowing = false
 	m.TestMode = false
@@ -1150,6 +1150,33 @@ func TestFollowRestartMsgRestartsFollowing(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("should return a cmd to start the follow stream")
+	}
+}
+
+func TestFollowStreamEndNoRestartForSingleContainer(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailStackName = "" // single container, not stack
+	m.logFollowing = true
+	m.logFollowSeq = 1
+	m.logFollowCh = make(chan string, 1)
+	m.TestMode = false
+
+	msg := LogFollowLineMsg{Done: true, Seq: 1}
+	updated, cmd := m.Update(msg)
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.logFollowing {
+		t.Fatal("logFollowing should be false after stream end")
+	}
+	if cmd != nil {
+		t.Fatal("should NOT schedule restart for single-container detail view")
 	}
 }
 
