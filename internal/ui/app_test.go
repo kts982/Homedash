@@ -958,3 +958,46 @@ func TestRunningCount(t *testing.T) {
 		t.Fatalf("StoppedCount = %d, want 1", m.displayItems[0].StoppedCount)
 	}
 }
+
+func TestOverlayCenterPreservesBackground(t *testing.T) {
+	// Plain-text test (no ANSI) to verify overlay logic
+	bgLines := []string{
+		"AAAAAAAAAAAAAAAAAA",
+		"BBBBBBBBBBBBBBBBBB",
+		"CCCCCCCCCCCCCCCCCC",
+		"DDDDDDDDDDDDDDDDDD",
+		"EEEEEEEEEEEEEEEEEE",
+	}
+	bg := strings.Join(bgLines, "\n")
+	fg := "XXX\nYYY"
+
+	bgW := lipgloss.Width(bg)
+	bgH := lipgloss.Height(bg)
+	fgW := lipgloss.Width(fg)
+	fgH := lipgloss.Height(fg)
+
+	result := overlayCenter(bg, fg, bgW, bgH, fgW, fgH)
+	lines := strings.Split(result, "\n")
+
+	if len(lines) != bgH {
+		t.Fatalf("overlay line count = %d, want %d", len(lines), bgH)
+	}
+
+	// First line should be unchanged (overlay starts at Y=1 for 5-line bg, 2-line fg)
+	if lines[0] != bgLines[0] {
+		t.Errorf("line 0 = %q, want %q (should be preserved)", lines[0], bgLines[0])
+	}
+
+	// Overlay lines should contain the foreground content
+	startY := (bgH - fgH) / 2
+	for i := startY; i < startY+fgH; i++ {
+		if !strings.Contains(lines[i], strings.Split(fg, "\n")[i-startY]) {
+			t.Errorf("line %d = %q, does not contain overlay content", i, lines[i])
+		}
+	}
+
+	// Last line should be unchanged
+	if lines[bgH-1] != bgLines[bgH-1] {
+		t.Errorf("last line = %q, want %q (should be preserved)", lines[bgH-1], bgLines[bgH-1])
+	}
+}
