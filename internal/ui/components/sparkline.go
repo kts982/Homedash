@@ -1,7 +1,9 @@
 package components
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/ui/styles"
 )
 
@@ -9,7 +11,7 @@ var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 // Sparkline renders a mini chart from a slice of values (0-100 range).
 // width controls how many data points are shown (most recent).
-func Sparkline(data []float64, width int, color lipgloss.Color) string {
+func Sparkline(data []float64, width int, color color.Color) string {
 	if len(data) == 0 {
 		return ""
 	}

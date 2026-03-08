@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/config"
 	"github.com/kostas/homedash/internal/state"

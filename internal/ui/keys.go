@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/state"
 )
@@ -65,7 +65,7 @@ func (m *Model) enterStackDetailView(stackName string) tea.Cmd {
 	return m.startFollowing()
 }
 
-func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		if m.collapseSeq > m.lastSavedSeq {
@@ -97,7 +97,7 @@ func handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	return handleDashboardKey(msg, m)
 }
 
-func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleQuickMenuKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	items := m.currentQuickMenuItems()
 	if len(items) == 0 {
 		m.closeQuickMenu()
@@ -109,7 +109,7 @@ func handleQuickMenuKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc", " ":
+	case "esc", " ", "space":
 		m.closeQuickMenu()
 	case "j", "down":
 		if m.quickMenuIndex < len(items)-1 {
@@ -212,7 +212,7 @@ func stackActionAvailable(item DisplayItem, action string) bool {
 	}
 }
 
-func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first when an action is pending
 	if m.confirmAction != "" && (m.dashboardActionContainerID != "" || m.dashboardActionStackName != "") {
 		switch msg.String() {
@@ -276,7 +276,7 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-	case " ":
+	case " ", "space":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
 			if item.Kind == DisplayGroup {
@@ -352,13 +352,13 @@ func handleDashboardKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleMouse(msg tea.Mouse, m *Model) (tea.Model, tea.Cmd) {
 	layout := m.measureDashboardLayout()
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
 	switch msg.Button {
-	case tea.MouseButtonWheelUp:
+	case tea.MouseWheelUp:
 		if m.focusedPanel == PanelContainers {
 			m.scrollOffset -= 3
 			if m.scrollOffset < 0 {
@@ -372,7 +372,7 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 				m.selectedIndex = m.scrollOffset
 			}
 		}
-	case tea.MouseButtonWheelDown:
+	case tea.MouseWheelDown:
 		if m.focusedPanel == PanelContainers {
 			maxOffset := len(m.displayItems) - m.containerRows
 			if maxOffset < 0 {
@@ -390,10 +390,10 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 				m.selectedIndex = m.scrollOffset + m.containerRows - 1
 			}
 		}
-	case tea.MouseButtonLeft:
-		if msg.Action != tea.MouseActionPress {
-			return m, nil
-		}
+	case tea.MouseLeft:
+		// In v2, MouseMsg types (Click, Release, Motion) differentiate actions.
+		// For a simple PoC, we'll treat any MouseLeft event on a row as a click.
+		
 		// Click on container row
 		row := msg.Y - m.containerStartY
 		if row < 0 || row >= m.containerRows {
@@ -434,14 +434,14 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func handleDetailMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleDetailMouse(msg tea.Mouse, m *Model) (tea.Model, tea.Cmd) {
 	switch msg.Button {
-	case tea.MouseButtonWheelUp:
+	case tea.MouseWheelUp:
 		m.detailScrollOffset -= 3
 		if m.detailScrollOffset < 0 {
 			m.detailScrollOffset = 0
 		}
-	case tea.MouseButtonWheelDown:
+	case tea.MouseWheelDown:
 		maxScroll := len(m.detailLogs) - m.detailLogRows
 		if maxScroll < 0 {
 			maxScroll = 0
@@ -470,7 +470,7 @@ func detailPageStep(m *Model) int {
 	return step
 }
 
-func handleDetailKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
+func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first
 	if m.confirmAction != "" {
 		switch msg.String() {

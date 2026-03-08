@@ -2,10 +2,11 @@ package panels
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/ui/components"
 	"github.com/kostas/homedash/internal/ui/styles"
@@ -569,7 +570,7 @@ func formatLogLine(line string, maxWidth int) string {
 
 	// Detect log level and pick color for the message
 	levelColor := detectLogLevel(msg)
-	if levelColor != "" {
+	if levelColor != nil {
 		msgStyle = lipgloss.NewStyle().Foreground(levelColor)
 	}
 
@@ -604,8 +605,8 @@ func splitLogSourcePrefix(msg string) (string, string, bool) {
 	return msg[1:endIdx], msg[endIdx+2:], true
 }
 
-func stackLogSourceColor(name string) lipgloss.Color {
-	palette := []lipgloss.Color{
+func stackLogSourceColor(name string) color.Color {
+	palette := []color.Color{
 		styles.Primary,
 		styles.Secondary,
 		styles.Success,
@@ -754,7 +755,7 @@ func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearc
 	}
 }
 
-func detectLogLevel(msg string) lipgloss.Color {
+func detectLogLevel(msg string) color.Color {
 	check := msg
 	if len(check) > 50 {
 		check = check[:50]
@@ -772,5 +773,5 @@ func detectLogLevel(msg string) lipgloss.Color {
 		}
 	}
 
-	return ""
+	return nil
 }

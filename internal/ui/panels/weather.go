@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/ui/components"
 	"github.com/kostas/homedash/internal/ui/styles"
