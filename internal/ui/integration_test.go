@@ -878,3 +878,28 @@ func TestFocus_BlurDoesNotPauseDetailTicks(t *testing.T) {
 		t.Error("Expected tick command after DockerDataMsg while blurred in detail view")
 	}
 }
+
+func TestFocus_PendingTickDiscardedWhileBlurred(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Lose focus
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 2. Simulate a pending tick firing (SystemTickMsg arrives while blurred)
+	// It should NOT trigger a collection command
+	_, cmd := m.Update(SystemTickMsg{})
+	if cmd != nil {
+		t.Error("Expected no collection command when SystemTickMsg arrives while blurred on dashboard")
+	}
+
+	// 3. Same for Docker and Weather
+	_, cmd = m.Update(DockerTickMsg{})
+	if cmd != nil {
+		t.Error("Expected no collection command when DockerTickMsg arrives while blurred on dashboard")
+	}
+	_, cmd = m.Update(WeatherTickMsg{})
+	if cmd != nil {
+		t.Error("Expected no collection command when WeatherTickMsg arrives while blurred on dashboard")
+	}
+}

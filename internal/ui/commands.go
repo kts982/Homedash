@@ -31,25 +31,25 @@ func collectWeatherCmd() tea.Msg {
 
 func systemTickCmd(disks []config.Disk, interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectSystemCmd(disks)
+		return SystemTickMsg{}
 	})
 }
 
 func dockerTickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectDockerCmd()
+		return DockerTickMsg{}
 	})
 }
 
 func weatherTickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
-		return collectWeatherCmd()
+		return WeatherTickMsg{}
 	})
 }
 
 func weatherRetryCmd() tea.Cmd {
 	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
-		return collectWeatherCmd()
+		return WeatherTickMsg{}
 	})
 }
 
