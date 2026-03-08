@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
 	"github.com/kts982/homedash/internal/config"
 	"github.com/kts982/homedash/internal/ui"
@@ -39,8 +39,6 @@ func main() {
 			WeatherRefreshInterval: cfg.Refresh.Weather,
 			TestMode:               *testMode,
 		}),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	if _, err := p.Run(); err != nil {
