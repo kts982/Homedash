@@ -1023,6 +1023,13 @@ func (m Model) View() tea.View {
 	v := tea.NewView(s)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+
+	title := "HomeDash"
+	if m.systemData.Hostname != "" {
+		title += " - " + m.systemData.Hostname
+	}
+	v.WindowTitle = title
+
 	return v
 }
 
