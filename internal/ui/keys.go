@@ -551,16 +551,16 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.stopFollowing()
 		m.detailLogs = nil
 		m.detailLogsErr = nil
+		m.detailScrollOffset = 0
 		if m.TestMode {
 			if m.detailStackName != "" {
 				return m, func() tea.Msg { return collectMockStackLogsCmd(m.detailStackName, 50) }
 			}
 			return m, func() tea.Msg { return collectMockLogsCmd(m.detailContainerID, 50) }
 		}
-		if m.detailStackName != "" {
-			return m, collectStackLogsCmd(m.dockerData.Containers, m.detailStackName, 50)
-		}
-		return m, collectLogsCmd(m.detailContainerID, 50)
+		// Restart the follow stream — same path as initial entry, gives
+		// consistent view instead of a differently-sorted batch fetch.
+		return m, m.startFollowing()
 	case "s":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.RunningCount > 0 {
