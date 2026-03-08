@@ -72,6 +72,10 @@ type LogFollowLineMsg struct {
 	Seq  uint64 // session counter to discard stale messages
 }
 
+// followRestartMsg triggers an automatic restart of log following after
+// a stream ends unexpectedly (e.g. container restart).
+type followRestartMsg struct{}
+
 // CollapseSaveTickMsg fires after debounce delay to trigger save.
 type CollapseSaveTickMsg struct{ Seq uint64 }
 
