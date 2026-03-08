@@ -521,6 +521,8 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.logFollowing {
 			m.stopFollowing()
 		} else {
+			// Jump to bottom so autoscroll engages on new lines
+			m.detailScrollOffset = detailMaxScroll(m)
 			return m, m.startFollowing()
 		}
 	case "j", "down":

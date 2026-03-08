@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1045,5 +1046,58 @@ func TestOverlayCenterPreservesBackground(t *testing.T) {
 	// Last line should be unchanged
 	if lines[bgH-1] != bgLines[bgH-1] {
 		t.Errorf("last line = %q, want %q (should be preserved)", lines[bgH-1], bgLines[bgH-1])
+	}
+}
+
+func TestToggleFollowOnJumpsToBottom(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 30)
+	m.detailScrollOffset = 5 // scrolled up, not at bottom
+
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "f"}, &m)
+	updated := updatedModel.(*Model)
+
+	expectedScroll := 30 - 10 // maxScroll = len(logs) - logRows = 20
+	if updated.detailScrollOffset != expectedScroll {
+		t.Fatalf("detailScrollOffset = %d, want %d (should jump to bottom on follow toggle)", updated.detailScrollOffset, expectedScroll)
+	}
+	if !updated.logFollowing {
+		t.Fatal("logFollowing should be true after toggling follow on")
+	}
+}
+
+func TestFollowModeAutoScrollsToBottom(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogRows = 10
+	m.logFollowing = true
+	m.logFollowSeq = 1
+	m.logFollowCh = make(chan string, 64)
+	m.detailLogs = nil
+	m.detailScrollOffset = 0
+
+	// Simulate 25 log lines arriving via follow
+	for i := 0; i < 25; i++ {
+		msg := LogFollowLineMsg{Line: fmt.Sprintf("log line %d", i), Seq: 1}
+		updated, _ := m.Update(msg)
+		switch v := updated.(type) {
+		case Model:
+			m = v
+		case *Model:
+			m = *v
+		}
+	}
+
+	if len(m.detailLogs) != 25 {
+		t.Fatalf("detailLogs count = %d, want 25", len(m.detailLogs))
+	}
+
+	expectedScroll := 25 - m.detailLogRows // 15
+	if m.detailScrollOffset != expectedScroll {
+		t.Fatalf("detailScrollOffset = %d, want %d (should autoscroll to bottom)", m.detailScrollOffset, expectedScroll)
 	}
 }
