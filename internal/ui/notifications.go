@@ -1,7 +1,9 @@
 package ui
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/ui/styles"
 )
 
@@ -72,7 +74,7 @@ func renderNotificationBar(q *notificationQueue, width int) string {
 	}
 
 	var icon string
-	var color lipgloss.Color
+	var color color.Color
 	switch n.Level {
 	case levelError:
 		icon = "  ✕ "

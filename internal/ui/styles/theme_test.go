@@ -65,20 +65,20 @@ func TestBuiltinPalettesHaveAllFields(t *testing.T) {
 			if p.Name == "" {
 				t.Fatal("Name is empty")
 			}
-			if p.BgBase == "" {
-				t.Fatal("BgBase is empty")
+			if p.BgBase == nil {
+				t.Fatal("BgBase is nil")
 			}
-			if p.Primary == "" {
-				t.Fatal("Primary is empty")
+			if p.Primary == nil {
+				t.Fatal("Primary is nil")
 			}
-			if p.Success == "" {
-				t.Fatal("Success is empty")
+			if p.Success == nil {
+				t.Fatal("Success is nil")
 			}
-			if p.Error == "" {
-				t.Fatal("Error is empty")
+			if p.Error == nil {
+				t.Fatal("Error is nil")
 			}
-			if p.TextPrimary == "" {
-				t.Fatal("TextPrimary is empty")
+			if p.TextPrimary == nil {
+				t.Fatal("TextPrimary is nil")
 			}
 		})
 	}

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/kostas/homedash/internal/collector"
 	"github.com/kostas/homedash/internal/ui/components"
 	"github.com/kostas/homedash/internal/ui/panels"
@@ -330,7 +330,7 @@ func TestHandleDetailKeyPagesDown(t *testing.T) {
 	m.detailLogRows = 10
 	m.detailLogs = make([]string, 40)
 
-	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyCtrlD}, &m)
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "ctrl+d"}, &m)
 	updated := updatedModel.(*Model)
 
 	if updated.detailScrollOffset != 5 {
@@ -344,7 +344,7 @@ func TestHandleDetailKeyPagesUp(t *testing.T) {
 	m.detailLogs = make([]string, 40)
 	m.detailScrollOffset = 9
 
-	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyCtrlU}, &m)
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "ctrl+u"}, &m)
 	updated := updatedModel.(*Model)
 
 	if updated.detailScrollOffset != 4 {
@@ -418,9 +418,8 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	}
 
 	clickY := m.containerStartY + expectedRows
-	updatedModel, _ := handleMouse(tea.MouseMsg{
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
+	updatedModel, _ := handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		Y:      clickY,
 	}, &m)
 	updated := updatedModel.(*Model)
@@ -484,6 +483,7 @@ func TestStackQuickMenuItemsMixed(t *testing.T) {
 func TestHandleDashboardKeyOpensStackQuickMenu(t *testing.T) {
 	m := newTestModel()
 	m.focusedPanel = PanelContainers
+	m.selectedIndex = 0
 	m.displayItems = []DisplayItem{
 		{
 			Kind:         DisplayGroup,
@@ -493,10 +493,7 @@ func TestHandleDashboardKeyOpensStackQuickMenu(t *testing.T) {
 		},
 	}
 
-	updatedModel, _ := handleDashboardKey(tea.KeyMsg{
-		Type:  tea.KeyRunes,
-		Runes: []rune{' '},
-	}, &m)
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Text: "space"}, &m)
 	updated := updatedModel.(*Model)
 
 	if !updated.quickMenuOpen {
@@ -522,10 +519,7 @@ func TestHandleDashboardKeySetsStackConfirmAction(t *testing.T) {
 		},
 	}
 
-	updatedModel, _ := handleDashboardKey(tea.KeyMsg{
-		Type:  tea.KeyRunes,
-		Runes: []rune{'s'},
-	}, &m)
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Text: "s"}, &m)
 	updated := updatedModel.(*Model)
 
 	if updated.confirmAction != "stop" {
@@ -587,7 +581,7 @@ func TestHandleDetailKeySetsStackConfirmAction(t *testing.T) {
 		},
 	}
 
-	updatedModel, _ := handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}, &m)
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "s"}, &m)
 	updated := updatedModel.(*Model)
 
 	if updated.confirmAction != "stop" {
@@ -753,7 +747,7 @@ func TestEscClearsFilterOnDashboard(t *testing.T) {
 	m.rebuildDisplayItems()
 
 	// Esc should clear filter
-	handleDashboardKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+	handleDashboardKey(tea.KeyPressMsg{Text: "esc"}, &m)
 
 	if m.searchInput.Value() != "" {
 		t.Fatalf("searchInput value = %q, want empty after esc", m.searchInput.Value())
@@ -845,24 +839,24 @@ func TestLogSearchNavigateNextPrev(t *testing.T) {
 	m.recomputeLogSearchMatches()
 
 	// Navigate forward
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "n"}, &m)
 	if m.logSearchIndex != 1 {
 		t.Fatalf("after n: logSearchIndex = %d, want 1", m.logSearchIndex)
 	}
 
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "n"}, &m)
 	if m.logSearchIndex != 2 {
 		t.Fatalf("after n: logSearchIndex = %d, want 2", m.logSearchIndex)
 	}
 
 	// Wrap around
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "n"}, &m)
 	if m.logSearchIndex != 0 {
 		t.Fatalf("after n wrap: logSearchIndex = %d, want 0", m.logSearchIndex)
 	}
 
 	// Navigate backward
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "N"}, &m)
 	if m.logSearchIndex != 2 {
 		t.Fatalf("after N: logSearchIndex = %d, want 2", m.logSearchIndex)
 	}
@@ -878,7 +872,7 @@ func TestLogSearchEscClearsSearch(t *testing.T) {
 	m.recomputeLogSearchMatches()
 
 	// Esc should clear search, not exit detail
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "esc"}, &m)
 
 	if m.logSearchInput.Value() != "" {
 		t.Fatalf("logSearchInput = %q, want empty", m.logSearchInput.Value())
@@ -896,7 +890,7 @@ func TestLogSearchEscWithoutSearchExitsDetail(t *testing.T) {
 	m.viewMode = ViewDetail
 	m.detailContainerID = "abc123"
 
-	handleDetailKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+	handleDetailKey(tea.KeyPressMsg{Text: "esc"}, &m)
 
 	if m.viewMode != ViewDashboard {
 		t.Fatal("viewMode should be ViewDashboard after esc with no search")
