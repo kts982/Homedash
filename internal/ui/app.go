@@ -651,6 +651,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logFollowing = false
 			m.logFollowCancel = nil
 			m.logFollowCh = nil
+			// Auto-restart follow after a delay if still in detail view.
+			// This handles container restarts where the stream dies but
+			// the user wants to keep watching logs.
+			if m.viewMode == ViewDetail && !m.TestMode {
+				return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+					return followRestartMsg{}
+				})
+			}
 			return m, nil
 		}
 		wasAtBottom := m.isFollowAtBottom()
@@ -677,6 +685,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScrollOffset = maxScroll
 		}
 		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
+	case followRestartMsg:
+		// Auto-restart follow if still in detail view and not already following
+		if m.viewMode == ViewDetail && !m.logFollowing {
+			return m, m.startFollowing()
+		}
 	}
 
 	return m, nil
