@@ -21,7 +21,7 @@ var DefaultBindings = []KeyBinding{
 	{"r", "refresh"},
 }
 
-func RenderHelp(bindings []KeyBinding, refreshing bool, width int) string {
+func RenderHelp(bindings []KeyBinding, refreshing, paused bool, width int) string {
 	keyStyle := lipgloss.NewStyle().
 		Foreground(styles.Primary).
 		Bold(true)
@@ -43,6 +43,12 @@ func RenderHelp(bindings []KeyBinding, refreshing bool, width int) string {
 			Foreground(styles.Warning).
 			Bold(true).
 			Render("  Refreshing...")
+		row += indicator
+	} else if paused {
+		indicator := lipgloss.NewStyle().
+			Foreground(styles.TextMuted).
+			Italic(true).
+			Render("  (paused)")
 		row += indicator
 	}
 
