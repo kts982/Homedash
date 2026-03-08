@@ -20,6 +20,15 @@ type WeatherDataMsg struct {
 	Err  error
 }
 
+// SystemTickMsg is sent by the periodic timer to trigger system collection.
+type SystemTickMsg struct{}
+
+// DockerTickMsg is sent by the periodic timer to trigger Docker collection.
+type DockerTickMsg struct{}
+
+// WeatherTickMsg is sent by the periodic timer to trigger weather collection.
+type WeatherTickMsg struct{}
+
 // ForceRefreshMsg triggers an immediate refresh of all data.
 type ForceRefreshMsg struct{}
 

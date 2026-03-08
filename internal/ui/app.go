@@ -339,6 +339,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return handleKey(msg, &m)
 
+	case SystemTickMsg:
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectSystemCmd(m.disks) }
+
+	case DockerTickMsg:
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectDockerCmd() }
+
+	case WeatherTickMsg:
+		if !m.focused && m.viewMode == ViewDashboard {
+			return m, nil
+		}
+		return m, func() tea.Msg { return collectWeatherCmd() }
+
 	case SystemDataMsg:
 		m.refreshing = false
 		var notifCmds []tea.Cmd
