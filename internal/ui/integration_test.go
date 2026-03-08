@@ -888,18 +888,46 @@ func TestFocus_PendingTickDiscardedWhileBlurred(t *testing.T) {
 
 	// 2. Simulate a pending tick firing (SystemTickMsg arrives while blurred)
 	// It should NOT trigger a collection command
-	_, cmd := m.Update(SystemTickMsg{})
+	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
 	if cmd != nil {
 		t.Error("Expected no collection command when SystemTickMsg arrives while blurred on dashboard")
 	}
 
 	// 3. Same for Docker and Weather
-	_, cmd = m.Update(DockerTickMsg{})
+	_, cmd = m.Update(DockerTickMsg{Epoch: 0})
 	if cmd != nil {
 		t.Error("Expected no collection command when DockerTickMsg arrives while blurred on dashboard")
 	}
-	_, cmd = m.Update(WeatherTickMsg{})
+	_, cmd = m.Update(WeatherTickMsg{Epoch: 0})
 	if cmd != nil {
 		t.Error("Expected no collection command when WeatherTickMsg arrives while blurred on dashboard")
+	}
+}
+
+func TestFocus_OldPendingTickDiscardedAfterRefocus(t *testing.T) {
+	m := newTestModeModel(t)
+	m.TestMode = false
+
+	// 1. Lose focus (epoch stays 0)
+	m, _ = applyMsg(m, tea.BlurMsg{})
+
+	// 2. Gain focus (epoch increments to 1)
+	m, _ = applyMsg(m, tea.FocusMsg{})
+	if m.tickEpoch != 1 {
+		t.Fatalf("tickEpoch = %d, want 1 after refocus", m.tickEpoch)
+	}
+
+	// 3. Simulate an OLD pending tick arriving (Epoch 0)
+	// It should be discarded even though we are focused now
+	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
+	if cmd != nil {
+		t.Error("Expected old SystemTickMsg (Epoch 0) to be discarded after refocus (Epoch 1)")
+	}
+
+	// 4. Simulate a NEW tick arriving (Epoch 1)
+	// It should be processed
+	_, cmd = m.Update(SystemTickMsg{Epoch: 1})
+	if cmd == nil {
+		t.Error("Expected new SystemTickMsg (Epoch 1) to be processed")
 	}
 }
