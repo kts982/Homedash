@@ -418,7 +418,7 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	}
 
 	clickY := m.containerStartY + expectedRows
-	updatedModel, _ := handleMouse(tea.Mouse{
+	updatedModel, _ := handleMouse(tea.MouseClickMsg{
 		Button: tea.MouseLeft,
 		Y:      clickY,
 	}, &m)

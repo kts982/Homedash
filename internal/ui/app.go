@@ -311,16 +311,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.recalcLayout()
 		return m, nil
-case tea.MouseMsg:
-	m.refreshing = false
-	mm := msg.Mouse()
-	if m.viewMode == ViewDetail {
-		return handleDetailMouse(mm, &m)
-	}
-	if !m.quickMenuOpen {
-		return handleMouse(mm, &m)
-	}
-	return m, nil
+	case tea.MouseMsg:
+		m.refreshing = false
+		if m.viewMode == ViewDetail {
+			return handleDetailMouse(msg, &m)
+		}
+		if !m.quickMenuOpen {
+			return handleMouse(msg, &m)
+		}
+		return m, nil
 
 	case tea.KeyPressMsg:
 		return handleKey(msg, &m)

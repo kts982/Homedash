@@ -352,103 +352,111 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func handleMouse(msg tea.Mouse, m *Model) (tea.Model, tea.Cmd) {
+func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 	layout := m.measureDashboardLayout()
 	m.containerRows = layout.containerRows
 	m.containerStartY = layout.containerStartY
 
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		if m.focusedPanel == PanelContainers {
-			m.scrollOffset -= 3
-			if m.scrollOffset < 0 {
-				m.scrollOffset = 0
+	mm := msg.Mouse()
+
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mm.Button {
+		case tea.MouseWheelUp:
+			if m.focusedPanel == PanelContainers {
+				m.scrollOffset -= 3
+				if m.scrollOffset < 0 {
+					m.scrollOffset = 0
+				}
+				// Keep selectedIndex within visible range
+				if m.selectedIndex >= m.scrollOffset+m.containerRows {
+					m.selectedIndex = m.scrollOffset + m.containerRows - 1
+				}
+				if m.selectedIndex < m.scrollOffset {
+					m.selectedIndex = m.scrollOffset
+				}
 			}
-			// Keep selectedIndex within visible range
-			if m.selectedIndex >= m.scrollOffset+m.containerRows {
-				m.selectedIndex = m.scrollOffset + m.containerRows - 1
-			}
-			if m.selectedIndex < m.scrollOffset {
-				m.selectedIndex = m.scrollOffset
+		case tea.MouseWheelDown:
+			if m.focusedPanel == PanelContainers {
+				maxOffset := len(m.displayItems) - m.containerRows
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				m.scrollOffset += 3
+				if m.scrollOffset > maxOffset {
+					m.scrollOffset = maxOffset
+				}
+				// Keep selectedIndex within visible range
+				if m.selectedIndex < m.scrollOffset {
+					m.selectedIndex = m.scrollOffset
+				}
+				if m.selectedIndex >= m.scrollOffset+m.containerRows && m.containerRows > 0 {
+					m.selectedIndex = m.scrollOffset + m.containerRows - 1
+				}
 			}
 		}
-	case tea.MouseWheelDown:
-		if m.focusedPanel == PanelContainers {
-			maxOffset := len(m.displayItems) - m.containerRows
-			if maxOffset < 0 {
-				maxOffset = 0
+	case tea.MouseClickMsg:
+		if mm.Button == tea.MouseLeft {
+			// Click on container row
+			row := mm.Y - m.containerStartY
+			if row < 0 || row >= m.containerRows {
+				return m, nil
 			}
-			m.scrollOffset += 3
-			if m.scrollOffset > maxOffset {
-				m.scrollOffset = maxOffset
+			idx := row + m.scrollOffset
+			if idx < 0 || idx >= len(m.displayItems) {
+				return m, nil
 			}
-			// Keep selectedIndex within visible range
-			if m.selectedIndex < m.scrollOffset {
-				m.selectedIndex = m.scrollOffset
+			m.focusedPanel = PanelContainers
+			item := m.displayItems[idx]
+			now := time.Now()
+			isDoubleClick := idx == m.lastClickIndex && now.Sub(m.lastClickTime) < 400*time.Millisecond
+			m.lastClickTime = now
+			m.lastClickIndex = idx
+			if item.Kind == DisplayGroup {
+				// Click on group header toggles collapse
+				m.selectedIndex = idx
+				m.trackSelection()
+				m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
+				m.rebuildDisplayItems()
+				m.ensureVisible()
+				if m.searchInput.Value() == "" {
+					m.collapseSeq++
+					return m, collapseSaveTickCmd(m.collapseSeq)
+				}
+			} else if item.Kind == DisplayContainer && item.Container != nil {
+				m.selectedIndex = idx
+				m.trackSelection()
+				if isDoubleClick {
+					// Double-click opens detail view
+					return m, m.enterDetailView(item.Container)
+				}
+			} else {
+				m.selectedIndex = idx
 			}
-			if m.selectedIndex >= m.scrollOffset+m.containerRows && m.containerRows > 0 {
-				m.selectedIndex = m.scrollOffset + m.containerRows - 1
-			}
-		}
-	case tea.MouseLeft:
-		// In v2, MouseMsg types (Click, Release, Motion) differentiate actions.
-		// For a simple PoC, we'll treat any MouseLeft event on a row as a click.
-		
-		// Click on container row
-		row := msg.Y - m.containerStartY
-		if row < 0 || row >= m.containerRows {
-			return m, nil
-		}
-		idx := row + m.scrollOffset
-		if idx < 0 || idx >= len(m.displayItems) {
-			return m, nil
-		}
-		m.focusedPanel = PanelContainers
-		item := m.displayItems[idx]
-		now := time.Now()
-		isDoubleClick := idx == m.lastClickIndex && now.Sub(m.lastClickTime) < 400*time.Millisecond
-		m.lastClickTime = now
-		m.lastClickIndex = idx
-		if item.Kind == DisplayGroup {
-			// Click on group header toggles collapse
-			m.selectedIndex = idx
-			m.trackSelection()
-			m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
-			m.rebuildDisplayItems()
-			m.ensureVisible()
-			if m.searchInput.Value() == "" {
-				m.collapseSeq++
-				return m, collapseSaveTickCmd(m.collapseSeq)
-			}
-		} else if item.Kind == DisplayContainer && item.Container != nil {
-			m.selectedIndex = idx
-			m.trackSelection()
-			if isDoubleClick {
-				// Double-click opens detail view
-				return m, m.enterDetailView(item.Container)
-			}
-		} else {
-			m.selectedIndex = idx
 		}
 	}
 	return m, nil
 }
 
-func handleDetailMouse(msg tea.Mouse, m *Model) (tea.Model, tea.Cmd) {
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		m.detailScrollOffset -= 3
-		if m.detailScrollOffset < 0 {
-			m.detailScrollOffset = 0
-		}
-	case tea.MouseWheelDown:
-		maxScroll := len(m.detailLogs) - m.detailLogRows
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		m.detailScrollOffset += 3
-		if m.detailScrollOffset > maxScroll {
-			m.detailScrollOffset = maxScroll
+func handleDetailMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
+	mm := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mm.Button {
+		case tea.MouseWheelUp:
+			m.detailScrollOffset -= 3
+			if m.detailScrollOffset < 0 {
+				m.detailScrollOffset = 0
+			}
+		case tea.MouseWheelDown:
+			maxScroll := len(m.detailLogs) - m.detailLogRows
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			m.detailScrollOffset += 3
+			if m.detailScrollOffset > maxScroll {
+				m.detailScrollOffset = maxScroll
+			}
 		}
 	}
 	return m, nil
