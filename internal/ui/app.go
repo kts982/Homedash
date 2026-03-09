@@ -1064,11 +1064,13 @@ func (m *Model) recalcLayout() {
 	// Detail view: log content starts after info panel + log panel chrome
 	m.detailLogStartY = infoPanelHeight + 2 // border(1) + title(1) of log panel
 
-	// Set textinput widths so placeholders render fully
+	// Set textinput widths so placeholders render fully.
+	// searchInput is inside a panel; logSearchInput is in the action bar
+	// alongside key hints, so give it a smaller width.
 	innerWidth := m.width - 4 // panel border(2) + padding(2)
 	if innerWidth > 0 {
 		m.searchInput.SetWidth(innerWidth)
-		m.logSearchInput.SetWidth(innerWidth)
+		m.logSearchInput.SetWidth(min(innerWidth/3, 30))
 	}
 }
 
