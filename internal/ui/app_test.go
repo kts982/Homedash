@@ -1213,9 +1213,9 @@ func TestViewHardwareCursorWhenFiltering(t *testing.T) {
 	if v.Cursor == nil {
 		t.Fatal("View().Cursor should be set when filtering")
 	}
-	// Cursor Y should be > 0 (below header + top panels)
-	if v.Cursor.Position.Y <= 0 {
-		t.Errorf("Cursor Y = %d, want > 0", v.Cursor.Position.Y)
+	// Cursor Y should be > 1 (below header + top panels + border + title)
+	if v.Cursor.Position.Y <= 1 {
+		t.Errorf("Cursor Y = %d, want > 1", v.Cursor.Position.Y)
 	}
 	// Cursor X should account for panel border(1) + padding(1) + prompt
 	if v.Cursor.Position.X < 2 {
