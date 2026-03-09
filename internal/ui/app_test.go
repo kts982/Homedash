@@ -1214,12 +1214,12 @@ func TestViewHardwareCursorWhenFiltering(t *testing.T) {
 		t.Fatal("View().Cursor should be set when filtering")
 	}
 	// Cursor Y should be > 1 (below header + top panels + border + title)
-	if v.Cursor.Position.Y <= 1 {
-		t.Errorf("Cursor Y = %d, want > 1", v.Cursor.Position.Y)
+	if v.Cursor.Y <= 1 {
+		t.Errorf("Cursor Y = %d, want > 1", v.Cursor.Y)
 	}
 	// Cursor X should account for panel border(1) + padding(1) + prompt
-	if v.Cursor.Position.X < 2 {
-		t.Errorf("Cursor X = %d, want >= 2", v.Cursor.Position.X)
+	if v.Cursor.X < 2 {
+		t.Errorf("Cursor X = %d, want >= 2", v.Cursor.X)
 	}
 }
 
@@ -1239,8 +1239,8 @@ func TestViewHardwareCursorWhenLogSearchActive(t *testing.T) {
 		t.Fatal("View().Cursor should be set when log search is active")
 	}
 	// Cursor should be on the last line (action bar)
-	if v.Cursor.Position.Y != m.height-1 {
-		t.Errorf("Cursor Y = %d, want %d (last line)", v.Cursor.Position.Y, m.height-1)
+	if v.Cursor.Y != m.height-1 {
+		t.Errorf("Cursor Y = %d, want %d (last line)", v.Cursor.Y, m.height-1)
 	}
 }
 
