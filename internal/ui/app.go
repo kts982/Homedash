@@ -184,6 +184,7 @@ func NewModel(options ModelOptions) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Filter containers..."
 	ti.Prompt = " / "
+	ti.SetVirtualCursor(false)
 	s := textinput.DefaultDarkStyles()
 	s.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
 	s.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
@@ -192,6 +193,7 @@ func NewModel(options ModelOptions) Model {
 	lsi := textinput.New()
 	lsi.Placeholder = "Search logs..."
 	lsi.Prompt = " / "
+	lsi.SetVirtualCursor(false)
 	ls := textinput.DefaultDarkStyles()
 	ls.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
 	ls.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
@@ -1221,6 +1223,23 @@ func (m Model) View() tea.View {
 		title += " - " + m.systemData.Hostname
 	}
 	v.WindowTitle = title
+
+	// Hardware cursor for text inputs
+	if m.filtering {
+		if c := m.searchInput.Cursor(); c != nil {
+			layout := m.measureDashboardLayout()
+			headerLines := renderedLineCount(layout.header)
+			topLines := renderedLineCount(layout.topRow)
+			c.Position.X += 2 // panel border(1) + padding(1)
+			c.Position.Y = headerLines + topLines + 1
+			v.Cursor = c
+		}
+	} else if m.logSearchActive {
+		if c := m.logSearchInput.Cursor(); c != nil {
+			c.Position.Y = m.height - 1 // action bar is last line
+			v.Cursor = c
+		}
+	}
 
 	return v
 }
