@@ -1230,13 +1230,15 @@ func (m Model) View() tea.View {
 			layout := m.measureDashboardLayout()
 			headerLines := renderedLineCount(layout.header)
 			topLines := renderedLineCount(layout.topRow)
-			c.Position.X += 2 // panel border(1) + padding(1)
-			c.Position.Y = headerLines + topLines + 1
+			c.Position.X += 2              // panel border(1) + padding(1)
+			c.Position.Y = headerLines + topLines + 2 // border(1) + title(1)
+			c.Shape = tea.CursorBar
 			v.Cursor = c
 		}
 	} else if m.logSearchActive {
 		if c := m.logSearchInput.Cursor(); c != nil {
 			c.Position.Y = m.height - 1 // action bar is last line
+			c.Shape = tea.CursorBar
 			v.Cursor = c
 		}
 	}
