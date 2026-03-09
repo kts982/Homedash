@@ -1200,3 +1200,57 @@ func TestFollowRestartMsgIgnoredWhenNotInDetailView(t *testing.T) {
 		t.Fatal("should return nil cmd when not in detail view")
 	}
 }
+
+func TestViewHardwareCursorWhenFiltering(t *testing.T) {
+	m := NewModel(ModelOptions{TestMode: true})
+	m.width = 120
+	m.height = 40
+	m.filtering = true
+	m.searchInput.Focus()
+	m.searchInput.SetValue("web")
+
+	v := m.View()
+	if v.Cursor == nil {
+		t.Fatal("View().Cursor should be set when filtering")
+	}
+	// Cursor Y should be > 0 (below header + top panels)
+	if v.Cursor.Position.Y <= 0 {
+		t.Errorf("Cursor Y = %d, want > 0", v.Cursor.Position.Y)
+	}
+	// Cursor X should account for panel border(1) + padding(1) + prompt
+	if v.Cursor.Position.X < 2 {
+		t.Errorf("Cursor X = %d, want >= 2", v.Cursor.Position.X)
+	}
+}
+
+func TestViewHardwareCursorWhenLogSearchActive(t *testing.T) {
+	m := NewModel(ModelOptions{TestMode: true})
+	m.width = 120
+	m.height = 40
+	m.viewMode = ViewDetail
+	m.detailContainer = &collector.Container{Name: "test", ID: "abc123"}
+	m.detailContainerID = "abc123"
+	m.logSearchActive = true
+	m.logSearchInput.Focus()
+	m.logSearchInput.SetValue("error")
+
+	v := m.View()
+	if v.Cursor == nil {
+		t.Fatal("View().Cursor should be set when log search is active")
+	}
+	// Cursor should be on the last line (action bar)
+	if v.Cursor.Position.Y != m.height-1 {
+		t.Errorf("Cursor Y = %d, want %d (last line)", v.Cursor.Position.Y, m.height-1)
+	}
+}
+
+func TestViewNoCursorWhenNotEditing(t *testing.T) {
+	m := NewModel(ModelOptions{TestMode: true})
+	m.width = 120
+	m.height = 40
+
+	v := m.View()
+	if v.Cursor != nil {
+		t.Fatal("View().Cursor should be nil when no input is active")
+	}
+}
