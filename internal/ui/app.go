@@ -1063,6 +1063,13 @@ func (m *Model) recalcLayout() {
 
 	// Detail view: log content starts after info panel + log panel chrome
 	m.detailLogStartY = infoPanelHeight + 2 // border(1) + title(1) of log panel
+
+	// Set textinput widths so placeholders render fully
+	innerWidth := m.width - 4 // panel border(2) + padding(2)
+	if innerWidth > 0 {
+		m.searchInput.SetWidth(innerWidth)
+		m.logSearchInput.SetWidth(innerWidth)
+	}
 }
 
 func (m *Model) ensureVisible() {
