@@ -184,7 +184,6 @@ func NewModel(options ModelOptions) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Filter containers..."
 	ti.Prompt = " / "
-	ti.SetVirtualCursor(false)
 	s := textinput.DefaultDarkStyles()
 	s.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
 	s.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
@@ -193,7 +192,6 @@ func NewModel(options ModelOptions) Model {
 	lsi := textinput.New()
 	lsi.Placeholder = "Search logs..."
 	lsi.Prompt = " / "
-	lsi.SetVirtualCursor(false)
 	ls := textinput.DefaultDarkStyles()
 	ls.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
 	ls.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
@@ -1224,23 +1222,26 @@ func (m Model) View() tea.View {
 	}
 	v.WindowTitle = title
 
-	// Hardware cursor for text inputs
-	if m.filtering {
-		if c := m.searchInput.Cursor(); c != nil {
-			layout := m.measureDashboardLayout()
-			headerLines := renderedLineCount(layout.header)
-			topLines := renderedLineCount(layout.topRow)
-			c.Position.X += 2              // panel border(1) + padding(1)
-			c.Position.Y = headerLines + topLines + 2 // border(1) + title(1)
-			c.Shape = tea.CursorBar
-			v.Cursor = c
-		}
-	} else if m.logSearchActive {
-		if c := m.logSearchInput.Cursor(); c != nil {
-			c.Position.Y = m.height - 1 // action bar is last line
-			c.Shape = tea.CursorBar
-			v.Cursor = c
-		}
+	// Hardware cursor for focused text inputs
+	if m.filtering && m.searchInput.Focused() {
+		layout := m.measureDashboardLayout()
+		headerLines := renderedLineCount(layout.header)
+		topLines := renderedLineCount(layout.topRow)
+		promptW := lipgloss.Width(m.searchInput.Prompt)
+		c := tea.NewCursor(
+			2+promptW+m.searchInput.Position(),         // panel border(1) + padding(1) + prompt + cursor pos
+			headerLines+topLines+2,                      // border(1) + title(1)
+		)
+		c.Shape = tea.CursorBar
+		v.Cursor = c
+	} else if m.logSearchActive && m.logSearchInput.Focused() {
+		promptW := lipgloss.Width(m.logSearchInput.Prompt)
+		c := tea.NewCursor(
+			promptW+m.logSearchInput.Position(),
+			m.height-1, // action bar is last line
+		)
+		c.Shape = tea.CursorBar
+		v.Cursor = c
 	}
 
 	return v
