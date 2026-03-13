@@ -411,13 +411,8 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 
 	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
 
-	// Compute expected system panel height
-	leftLines := 4 + len(m.systemData.Disks)
-	rightLines := 4
-	contentLines := leftLines
-	if rightLines > contentLines {
-		contentLines = rightLines
-	}
+	// Compute expected system panel height (narrow: single-column stacks all)
+	contentLines := 8 + len(m.systemData.Disks)
 	if contentLines > 12 {
 		contentLines = 12
 	}
@@ -427,14 +422,14 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 
-	countLines := func(s string) int {
+	countLines2 := func(s string) int {
 		if s == "" {
 			return 0
 		}
 		return strings.Count(s, "\n") + 1
 	}
 
-	expectedRows := m.height - countLines(header) - countLines(systemPanel) - countLines(bottomSection) - 5
+	expectedRows := m.height - countLines2(header) - countLines2(systemPanel) - countLines2(bottomSection) - 5
 	if expectedRows < 0 {
 		expectedRows = 0
 	}
@@ -462,12 +457,8 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 
 	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
 
-	leftLines := 4 + len(m.systemData.Disks)
-	rightLines := 4
-	contentLines := leftLines
-	if rightLines > contentLines {
-		contentLines = rightLines
-	}
+	// Narrow: single-column stacks all content
+	contentLines := 8 + len(m.systemData.Disks)
 	if contentLines > 12 {
 		contentLines = 12
 	}

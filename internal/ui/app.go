@@ -1357,14 +1357,20 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
 
 	// Compute system panel height dynamically.
-	// Left column: 2 (CPU spark+gauge) + 2 (RAM spark+gauge) + disks
-	// Right column: 4 (LOAD, NET, MEM, SWAP)
 	// Panel chrome: border(2) + title(1) = 3
-	leftLines := 4 + len(m.systemData.Disks)
-	rightLines := 4
-	contentLines := leftLines
-	if rightLines > contentLines {
-		contentLines = rightLines
+	var contentLines int
+	if m.isNarrow() {
+		// Single-column: all items stack vertically
+		// CPU spark+gauge(2) + RAM spark+gauge(2) + disks + LOAD+NET+MEM+SWAP(4)
+		contentLines = 8 + len(m.systemData.Disks)
+	} else {
+		// Two-column: max of left and right
+		leftLines := 4 + len(m.systemData.Disks)
+		rightLines := 4
+		contentLines = leftLines
+		if rightLines > contentLines {
+			contentLines = rightLines
+		}
 	}
 	if contentLines > 12 {
 		contentLines = 12
