@@ -19,6 +19,7 @@ func newTestModel() Model {
 		collapsedStacks: make(map[string]bool),
 		containerRows:   10,
 		cpuHistory:      components.NewRingBuffer(60),
+		ramHistory:      components.NewRingBuffer(60),
 		diskWarned:      make(map[string]bool),
 		shownWarnings:   make(map[string]bool),
 	}
@@ -408,22 +409,27 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 
 	m.recalcLayout()
 
-	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
-	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
-	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
+
+	// Compute expected system panel height (narrow: single-column stacks all)
+	contentLines := 8 + len(m.systemData.Disks)
+	if contentLines > 12 {
+		contentLines = 12
+	}
+	topHeight := contentLines + 3
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
 	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 
-	countLines := func(s string) int {
+	countLines2 := func(s string) int {
 		if s == "" {
 			return 0
 		}
 		return strings.Count(s, "\n") + 1
 	}
 
-	expectedRows := m.height - countLines(header) - countLines(topRow) - countLines(bottomSection) - 5
+	expectedRows := m.height - countLines2(header) - countLines2(systemPanel) - countLines2(bottomSection) - 5
 	if expectedRows < 0 {
 		expectedRows = 0
 	}
@@ -449,14 +455,19 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	m.selectedIndex = 1
 	m.recalcLayout()
 
-	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
-	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
-	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
+
+	// Narrow: single-column stacks all content
+	contentLines := 8 + len(m.systemData.Disks)
+	if contentLines > 12 {
+		contentLines = 12
+	}
+	topHeight := contentLines + 3
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
 	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
-	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(topRow, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
+	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(systemPanel, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
 	if expectedRows < 0 {
 		expectedRows = 0
 	}

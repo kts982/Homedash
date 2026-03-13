@@ -13,7 +13,6 @@ type Panel int
 const (
 	PanelSystem Panel = iota
 	PanelContainers
-	PanelWeather
 	panelCount
 )
 

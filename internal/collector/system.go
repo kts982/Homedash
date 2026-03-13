@@ -88,6 +88,17 @@ func CollectSystem(disks []config.Disk) (SystemData, error) {
 				data.MemPercent = float64(used) / float64(total) * 100
 			}
 		}
+
+		// Swap
+		swapTotalKB := memInfo["SwapTotal"]
+		swapFreeKB := memInfo["SwapFree"]
+		data.SwapTotal = swapTotalKB * 1024
+		if swapTotalKB > swapFreeKB {
+			data.SwapUsed = (swapTotalKB - swapFreeKB) * 1024
+		}
+		if swapTotalKB > 0 {
+			data.SwapPercent = float64(swapTotalKB-swapFreeKB) / float64(swapTotalKB) * 100
+		}
 	}
 
 	// Load average

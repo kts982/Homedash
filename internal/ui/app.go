@@ -68,6 +68,7 @@ type Model struct {
 	dockerHost  string
 
 	cpuHistory      *components.RingBuffer
+	ramHistory      *components.RingBuffer
 	focusedPanel    Panel
 	scrollOffset    int
 	containerRows   int
@@ -199,6 +200,7 @@ func NewModel(options ModelOptions) Model {
 
 	return Model{
 		cpuHistory:             components.NewRingBuffer(60),
+		ramHistory:             components.NewRingBuffer(60),
 		focusedPanel:           PanelContainers,
 		containerRows:          10,
 		collapsedStacks:        state.Load(),
@@ -375,6 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			m.systemData = msg.Data
 			m.cpuHistory.Push(msg.Data.CPUPercent)
+			m.ramHistory.Push(msg.Data.MemPercent)
 
 			// Disk threshold warnings
 			for _, d := range msg.Data.Disks {
@@ -1351,36 +1354,37 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		return dashboardLayoutMetrics{}
 	}
 
-	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
+	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
 
-	topHeight := 11
-	var topRow string
+	// Compute system panel height dynamically.
+	// Panel chrome: border(2) + title(1) = 3
+	var contentLines int
 	if m.isNarrow() {
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
-			m.width, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			m.width, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
+		// Single-column: all items stack vertically
+		// CPU spark+gauge(2) + RAM spark+gauge(2) + disks + LOAD+NET+MEM+SWAP(4)
+		contentLines = 8 + len(m.systemData.Disks)
 	} else {
-		leftWidth := m.width * 40 / 100
-		if leftWidth < 35 {
-			leftWidth = 35
+		// Two-column: max of left and right
+		leftLines := 4 + len(m.systemData.Disks)
+		rightLines := 4
+		contentLines = leftLines
+		if rightLines > contentLines {
+			contentLines = rightLines
 		}
-		rightWidth := m.width - leftWidth
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
-			leftWidth, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			rightWidth, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, weatherPanel)
 	}
+	if contentLines > 12 {
+		contentLines = 12
+	}
+	topHeight := contentLines + 3 // +3 for panel chrome
+
+	systemPanel := panels.RenderSystem(
+		m.systemData, m.cpuHistory, m.ramHistory,
+		m.width, topHeight,
+		m.focusedPanel == PanelSystem)
+	topRow := systemPanel
+
+	// Measure actual rendered height to avoid wrapping surprises
+	topLines := renderedLineCount(topRow)
 
 	previewBar := panels.RenderPreview(
 		m.selectedContainer(),
@@ -1401,7 +1405,6 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, bottomBars...)
 
 	headerLines := renderedLineCount(header)
-	topLines := renderedLineCount(topRow)
 	bottomLines := renderedLineCount(bottomSection)
 	containerChrome := 4 // border(2) + title(1) + column header(1)
 	if m.filtering || m.searchInput.Value() != "" {
