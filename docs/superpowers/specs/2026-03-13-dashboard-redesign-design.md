@@ -31,7 +31,13 @@ HOMEDASH | myhost | up 3d 2h | 4 CPU / 16.0G RAM | sun 18C Cloudy droplet 72% | 
 
 **Panel navigation**: `PanelWeather` is removed from the panel enum. `panelCount` drops from 3 to 2 (`PanelSystem`, `PanelContainers`). Tab cycling skips weather.
 
-**Weather data flow**: No changes to the collector or tick schedule. `RenderHeader` receives `WeatherData` and error/retry state as additional parameters.
+**Weather data flow**: No changes to the collector or tick schedule. `RenderHeader` signature expands to:
+
+```go
+func RenderHeader(data collector.SystemData, weather collector.WeatherData, weatherErr error, weatherRetries int, width int, testMode bool) string
+```
+
+Weather stale detection in test mode must use the same fixed reference time (`2026-03-07 12:00:00 UTC`) already used for the clock display, so `time.Since(weather.CollectedAt)` produces deterministic output.
 
 ### 2. System Panel: Full Width, Two Columns
 
@@ -57,9 +63,11 @@ The system panel takes the full terminal width (no longer shares a row with weat
 - SWAP: absolute used/total. Warning color when swap percent > 25%.
 - TEMP: CPU temperature. Placeholder for branch 2; shows `--` or is hidden until temperature collection is implemented.
 
-**Column split**: Left column gets `innerWidth * 55 / 100`, right column gets the remainder. Left minimum: 30 chars. If terminal is too narrow for two columns (below ~60 chars inner width), falls back to single-column stacked layout.
+**Column split**: Left column gets `innerWidth * 55 / 100`, right column gets the remainder. Left minimum: 30 chars. The two-column-to-single-column fallback is governed by `isNarrow()` (triggers at `m.width < 90`), which is the sole gatekeeper — no separate inner-width threshold.
 
-**Height**: Dynamic based on content, capped at 12 lines. Left column line count = 2 (CPU sparkline + gauge) + 2 (RAM sparkline + gauge) + len(disks). Right column line count = 5 (LOAD, NET, MEM, SWAP, TEMP). Panel height = max(left, right) + panel chrome (border + title). If either column exceeds 12 content lines, it truncates from the bottom.
+**Height**: Dynamic based on content, capped at 12 content lines. Left column line count = 2 (CPU sparkline + gauge) + 2 (RAM sparkline + gauge) + len(disks). Right column line count = 5 (LOAD, NET, MEM, SWAP, TEMP). Panel height = max(left, right) + panel chrome (border + title). If either column exceeds 12 content lines, it truncates from the bottom.
+
+The current hardcoded `topHeight := 11` in `measureDashboardLayout` (app.go:1356) is replaced with a dynamic calculation: `topHeight := max(leftLines, rightLines) + panelChrome`, capped at `12 + panelChrome`. The `topRow` field in `dashboardLayoutMetrics` becomes the rendered system panel only (no longer a join of system + weather).
 
 ### 3. RAM Sparkline
 
@@ -68,6 +76,12 @@ A new `ramHistory *components.RingBuffer` field is added to the Model, initializ
 On each `SystemDataMsg`, `m.ramHistory.Push(data.MemPercent)` is called alongside the existing `m.cpuHistory.Push(data.CPUPercent)`.
 
 The sparkline is rendered using the existing `components.Sparkline()` function with `styles.Secondary` color (to visually distinguish from the CPU sparkline which uses `styles.Primary`).
+
+`RenderSystem` signature expands to accept the second ring buffer:
+
+```go
+func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.RingBuffer, width, height int, focused bool) string
+```
 
 ### 4. Swap Usage
 
@@ -124,7 +138,8 @@ Narrow is defined by `m.isNarrow()` (existing function). In narrow mode:
 | `internal/ui/messages.go` | No changes expected (weather messages unchanged) |
 | `internal/ui/notifications.go` | No changes |
 | `internal/ui/test_fixtures.go` | Update mock system data with swap fields, seed `ramHistory` |
-| `internal/ui/app_test.go` | Update tests for new panel count, layout changes |
+| `internal/ui/app_test.go` | Substantial rework: `TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout` and `TestHandleMouseIgnoresClicksBelowRenderedContainerRows` manually reconstruct the top row from system+weather — must be rewritten for single-panel layout. Update panel count assertions. |
+| `internal/ui/integration_test.go` | `TestIntegration_TabCyclesPanels` asserts `PanelWeather` in the tab cycle — must be updated for 2-panel cycle (System, Containers) |
 | `internal/ui/panels/containers_test.go` | No changes expected |
 | `internal/ui/panels/preview_test.go` | No changes expected |
 
