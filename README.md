@@ -30,7 +30,7 @@ It reads system data from `/proc`, talks directly to the Docker socket, and opti
 
 <img width="800" alt="HomeDash dashboard overview" src="docs/screenshots/dashboard-overview.png" />
 
-Host metrics, Compose-stack grouping, and container state in one view.
+Full-width system panel with CPU/RAM sparklines, gauges with disk usage detail, and container state in one view. Weather conditions shown in the header bar.
 
 ### Container Detail And Actions
 
@@ -48,12 +48,12 @@ Full-screen container and stack logs, detail metadata, and quick actions without
 - **Container and stack detail views** - full-screen log viewers with default follow mode on entry, merged stack logs, published port hints, mounts, and start/stop/restart actions
 - **Log search and navigation** - `/` in detail views highlights matches across logs, with `n`/`N` to cycle through them
 - **Quick-action menu** - `space` opens fast stack or container actions, including stack logs, without leaving the dashboard
-- **System metrics** - CPU, RAM, disk usage, network I/O, uptime, and sparkline history
+- **System metrics** - full-width two-column panel with CPU/RAM sparklines, gauges with disk usage/capacity detail, load averages, network I/O, swap, and uptime
 - **Container search** - filter dashboard containers by name with `/`
 - **Deterministic test mode** - `--test-mode` flag for developers to run the TUI with synthetic data and frozen UI elements for stable testing and screenshots (internal helper)
 - **Focus-aware refresh** - background polling pauses automatically when the terminal loses focus on the dashboard, and resumes with an immediate refresh on refocus; detail/log views stay live regardless
 - **Notifications** - Docker state changes, disk warnings, and weather errors
-- **Weather** - current conditions via [wttr.in](https://wttr.in)
+- **Weather** - current conditions via [wttr.in](https://wttr.in), shown in the header bar with responsive degradation
 - **Responsive layout** - works across narrow and wide terminals
 - **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
 - **Themes and mouse support** - Tokyo Night, Catppuccin, Dracula, plus click and scroll navigation
@@ -76,7 +76,6 @@ Expect ongoing UI and feature changes while the project settles.
 Near term:
 
 - packaging and release improvements
-- screenshot refresh for stack detail and log workflows
 
 Not planned:
 
@@ -196,9 +195,9 @@ Selecting `View Stack Logs` from the stack quick-action menu opens a merged stac
 ## How It Works
 
 ```
-/proc/stat, /proc/meminfo, ...  ──2s──>  System panel
+/proc/stat, /proc/meminfo, ...  ──2s──>  System panel (full-width, two-column)
 /var/run/docker.sock (API v1.47) ──5s──>  Container list + stats
-wttr.in JSON API               ──5min──>  Weather panel
+wttr.in JSON API               ──5min──>  Header bar (compact weather)
 ```
 
 Most data collection is tick-driven through [Bubble Tea](https://charm.land/bubbletea) commands. Docker container stats are fetched in parallel with a 5-worker pool, and log follow mode uses streaming goroutines tied to the active container or stack detail view. Background polling pauses when the terminal loses focus on the dashboard and resumes on refocus.
@@ -214,7 +213,7 @@ internal/config/        YAML config loader
 internal/state/         Persistent UI state
 internal/ui/            Bubble Tea UI layer
   components/           Reusable primitives (gauge, sparkline, panel)
-  panels/               Screen sections (system, containers, detail, weather, help)
+  panels/               Screen sections (system, containers, detail, header, help)
   styles/               Theme palettes
 ```
 
