@@ -58,7 +58,7 @@ func GaugeWithDetail(label string, percent float64, detail string, width int) st
 	}
 
 	color := styles.GaugeColor(percent)
-	detailStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	detailStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
 
 	// If the bar is wide enough, overlay the detail text centered on the bar
 	if detailLen+2 <= barWidth { // +2 for spaces around detail
