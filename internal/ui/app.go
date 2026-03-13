@@ -1360,7 +1360,7 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	var topRow string
 	if m.isNarrow() {
 		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
+			m.systemData, m.cpuHistory, m.ramHistory,
 			m.width, topHeight,
 			m.focusedPanel == PanelSystem)
 		weatherPanel := panels.RenderWeather(
@@ -1375,7 +1375,7 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		}
 		rightWidth := m.width - leftWidth
 		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory,
+			m.systemData, m.cpuHistory, m.ramHistory,
 			leftWidth, topHeight,
 			m.focusedPanel == PanelSystem)
 		weatherPanel := panels.RenderWeather(
