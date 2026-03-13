@@ -22,12 +22,21 @@ The weather panel is removed as a standalone panel. Weather data is rendered as 
 HOMEDASH | myhost | up 3d 2h | 4 CPU / 16.0G RAM | sun 18C Cloudy droplet 72% | 15:04
 ```
 
-**Responsive degradation** (follows the existing header pattern that drops extras when width is tight):
-- Wide (>= ~25 chars available): icon + temp + condition + humidity (`sun 18C Cloudy droplet 72%`)
-- Medium (>= ~10 chars available): icon + temp (`sun 18C`)
-- Narrow: weather hidden entirely
+**Responsive degradation**: Weather is rendered separately from the existing extras loop. After all standard extras are placed, the remaining width before the clock is measured. Weather is then rendered in the largest variant that fits:
 
-**Stale/error handling**: Temperature text renders in warning color when weather data is stale (error with retries exhausted). No retry counters in the header. Weather fetch errors continue to produce notifications via the existing notification queue.
+1. Build three weather string variants: full (`icon + temp + condition + humidity`), compact (`icon + temp`), none.
+2. Measure remaining width after existing extras + clock reservation.
+3. Try full variant first; if `lipgloss.Width(full) <= remaining`, use it. Otherwise try compact. Otherwise omit.
+
+This is distinct from the existing extras loop which adds/drops whole items — weather has its own multi-variant selection logic.
+
+**Loading / error / stale states**:
+- **Never loaded** (no successful fetch yet, `weather.TempC == ""`): show `icon --` in `TextMuted` color. This ensures weather presence is always visible in the header, not silently omitted.
+- **Stale** (had data, but latest fetch failed with retries exhausted): temperature text renders in `Warning` color.
+- **Retrying** (fetch failed, retries remaining): no header change; existing notification queue handles visibility.
+- **Error, no prior data** (fetch failed, no prior success, retries exhausted): show `icon --` in `Warning` color.
+
+Weather fetch errors continue to produce notifications via the existing notification queue for detailed error messages.
 
 **Panel navigation**: `PanelWeather` is removed from the panel enum. `panelCount` drops from 3 to 2 (`PanelSystem`, `PanelContainers`). Tab cycling skips weather.
 
@@ -49,7 +58,7 @@ The system panel takes the full terminal width (no longer shares a row with weat
 | CPU  gauge bar 62%                 NET   down 2.4M/s up 340K/s |
 |      barchart history (2m)         MEM   7.2G / 16.0G      |
 | RAM  gauge bar 38%                 SWAP  0B / 4.0G          |
-| /    gauge bar 89%                 TEMP  CPU 52C             |
+| /    gauge bar 89%                                          |
 | /mnt gauge bar 31%                                          |
 +------------------------------------------------------------+
 ```
@@ -61,13 +70,12 @@ The system panel takes the full terminal width (no longer shares a row with weat
 - NET: download (Primary color, down arrow) and upload (Secondary color, up arrow) rates.
 - MEM: absolute used/total in human-readable format (e.g., `7.2G / 16.0G`).
 - SWAP: absolute used/total. Warning color when swap percent > 25%.
-- TEMP: CPU temperature. Placeholder for branch 2; shows `--` or is hidden until temperature collection is implemented.
 
 **Column split**: Left column gets `innerWidth * 55 / 100`, right column gets the remainder. Left minimum: 30 chars. The two-column-to-single-column fallback is governed by `isNarrow()` (triggers at `m.width < 90`), which is the sole gatekeeper — no separate inner-width threshold.
 
-**Height**: Dynamic based on content, capped at 12 content lines. Left column line count = 2 (CPU sparkline + gauge) + 2 (RAM sparkline + gauge) + len(disks). Right column line count = 5 (LOAD, NET, MEM, SWAP, TEMP). Panel height = max(left, right) + panel chrome (border + title). If either column exceeds 12 content lines, it truncates from the bottom.
+**Height**: Dynamic based on content, capped at 12 content lines. Left column line count = 2 (CPU sparkline + gauge) + 2 (RAM sparkline + gauge) + len(disks). Right column line count = 4 (LOAD, NET, MEM, SWAP). Panel height = max(left, right) + panel chrome (border + title). If either column exceeds 12 content lines, it truncates from the bottom.
 
-The current hardcoded `topHeight := 11` in `measureDashboardLayout` (app.go:1356) is replaced with a dynamic calculation: `topHeight := max(leftLines, rightLines) + panelChrome`, capped at `12 + panelChrome`. The `topRow` field in `dashboardLayoutMetrics` becomes the rendered system panel only (no longer a join of system + weather).
+The current hardcoded `topHeight := 11` in `measureDashboardLayout` (app.go:1356) is replaced with a dynamic calculation. To avoid height prediction errors from line wrapping, `RenderSystem` returns a pre-rendered string and the layout measures its actual rendered height via `lipgloss.Height()` rather than predicting line counts. The `topRow` field in `dashboardLayoutMetrics` becomes the rendered system panel only (no longer a join of system + weather).
 
 ### 3. RAM Sparkline
 
@@ -132,7 +140,7 @@ Narrow is defined by `m.isNarrow()` (existing function). In narrow mode:
 | `internal/ui/panels/header.go` | Accept `WeatherData`, error state, retries; render inline weather with responsive degradation |
 | `internal/ui/panels/weather.go` | Delete file |
 | `internal/ui/panels/weather_test.go` | Delete file (weather rendering tested via header tests) |
-| `internal/ui/panels/system.go` | Two-column layout, accept `ramHistory`, render RAM sparkline, swap, TEMP placeholder |
+| `internal/ui/panels/system.go` | Two-column layout, accept `ramHistory`, render RAM sparkline, swap display |
 | `internal/ui/app.go` | Remove `PanelWeather` references, add `ramHistory` field, update `measureDashboardLayout` (single full-width system panel, dynamic height with cap), update `renderDashboard`, pass weather data to header |
 | `internal/ui/keys.go` | Remove `PanelWeather` from panel enum, update `panelCount` |
 | `internal/ui/messages.go` | No changes expected (weather messages unchanged) |
@@ -146,7 +154,7 @@ Narrow is defined by `m.isNarrow()` (existing function). In narrow mode:
 ## Out of Scope
 
 - Network I/O sparklines (branch 2: host-observability)
-- CPU temperature collection (branch 2: host-observability; TEMP line shows placeholder)
+- CPU temperature collection and display (branch 2: host-observability)
 - Top processes (branch 3)
 - Docker pull/recreate commands (branch 4)
 
