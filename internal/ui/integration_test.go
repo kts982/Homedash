@@ -652,18 +652,13 @@ func TestIntegration_TabCyclesPanels(t *testing.T) {
 	}
 
 	m, _ = applyKey(m, "tab")
-	if m.focusedPanel != PanelWeather {
-		t.Fatalf("panel after tab = %d, want PanelWeather", m.focusedPanel)
-	}
-
-	m, _ = applyKey(m, "tab")
 	if m.focusedPanel != PanelSystem {
-		t.Fatalf("panel after 2nd tab = %d, want PanelSystem", m.focusedPanel)
+		t.Fatalf("panel after tab = %d, want PanelSystem", m.focusedPanel)
 	}
 
 	m, _ = applyKey(m, "tab")
 	if m.focusedPanel != PanelContainers {
-		t.Fatalf("panel after 3rd tab = %d, want PanelContainers (cycle)", m.focusedPanel)
+		t.Fatalf("panel after 2nd tab = %d, want PanelContainers (cycle)", m.focusedPanel)
 	}
 }
 
