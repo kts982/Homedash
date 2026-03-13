@@ -21,6 +21,9 @@ func collectMockSystemCmd() tea.Msg {
 			Disks: []collector.DiskInfo{
 				{Mount: "/data", Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024, Percent: 40.0},
 			},
+			SwapTotal:   4 * 1024 * 1024 * 1024, // 4G
+			SwapUsed:    256 * 1024 * 1024,       // 256M
+			SwapPercent: 6.25,
 			NetRxRate:   1024 * 1024,
 			NetTxRate:   512 * 1024,
 			CollectedAt: time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC),

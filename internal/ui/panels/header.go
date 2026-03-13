@@ -2,6 +2,7 @@ package panels
 
 import (
 	"fmt"
+	"image/color"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -9,7 +10,7 @@ import (
 	"github.com/kostas/homedash/internal/ui/styles"
 )
 
-func RenderHeader(data collector.SystemData, width int, testMode bool) string {
+func RenderHeader(data collector.SystemData, weather collector.WeatherData, weatherErr error, weatherRetries int, width int, testMode bool) string {
 	bg := styles.BgPanel
 	fg := styles.TextPrimary
 
@@ -66,6 +67,15 @@ func RenderHeader(data collector.SystemData, width int, testMode bool) string {
 		left = candidate
 	}
 
+	// Weather: try full variant, then compact, then omit
+	for _, variant := range headerWeatherVariants(weather, weatherErr, weatherRetries, bg) {
+		candidate := left + sep + variant
+		if lipgloss.Width(candidate)+clockReserved <= width {
+			left = candidate
+			break
+		}
+	}
+
 	// Right-align the clock
 	leftWidth := lipgloss.Width(left)
 	gap := width - leftWidth - clockWidth
@@ -82,6 +92,34 @@ func RenderHeader(data collector.SystemData, width int, testMode bool) string {
 	row := lipgloss.NewStyle().Inline(true).MaxWidth(width).Render(left + spacer + clock)
 
 	return base.Render(row)
+}
+
+// headerWeatherVariants returns weather display variants from longest to shortest.
+func headerWeatherVariants(weather collector.WeatherData, weatherErr error, weatherRetries int, bg color.Color) []string {
+	stale := weatherErr != nil && weatherRetries == 0
+
+	// No data yet
+	if weather.TempC == "" {
+		style := lipgloss.NewStyle().Background(bg).Foreground(styles.TextMuted)
+		if stale {
+			style = lipgloss.NewStyle().Background(bg).Foreground(styles.Warning)
+		}
+		return []string{style.Render("☁ --")}
+	}
+
+	// Have data — choose color based on staleness
+	tempColor := styles.Info
+	if stale {
+		tempColor = styles.Warning
+	}
+
+	tempStyle := lipgloss.NewStyle().Background(bg).Foreground(tempColor).Bold(true)
+	condStyle := lipgloss.NewStyle().Background(bg).Foreground(styles.TextSecondary)
+
+	compact := weather.Icon + " " + tempStyle.Render(weather.TempC+"°C")
+	full := compact + " " + condStyle.Render(weather.Condition) + " " + condStyle.Render("💧"+weather.Humidity)
+
+	return []string{full, compact}
 }
 
 func formatUptime(d time.Duration) string {

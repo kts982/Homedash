@@ -366,6 +366,53 @@ func TestCollectSystemDiskWarning(t *testing.T) {
 	}
 }
 
+func TestParseMemInfoSwap(t *testing.T) {
+	input := "MemTotal:       16384000 kB\nMemFree:         8000000 kB\nMemAvailable:   12000000 kB\nSwapTotal:       4096000 kB\nSwapFree:        3072000 kB\n"
+	info := parseMemInfo(input)
+
+	swapTotal := info["SwapTotal"]
+	swapFree := info["SwapFree"]
+	if swapTotal != 4096000 {
+		t.Fatalf("SwapTotal = %d, want 4096000", swapTotal)
+	}
+	if swapFree != 3072000 {
+		t.Fatalf("SwapFree = %d, want 3072000", swapFree)
+	}
+}
+
+func TestCollectSystemSwapFields(t *testing.T) {
+	memInfo := map[string]uint64{
+		"MemTotal":     16384000,
+		"MemAvailable": 12000000,
+		"SwapTotal":    4096000,
+		"SwapFree":     3072000,
+	}
+	swapTotal := memInfo["SwapTotal"]
+	swapFree := memInfo["SwapFree"]
+	swapUsedKB := swapTotal - swapFree
+	swapPercent := float64(swapUsedKB) / float64(swapTotal) * 100
+
+	if swapUsedKB != 1024000 {
+		t.Fatalf("swapUsed = %d kB, want 1024000", swapUsedKB)
+	}
+	if swapPercent < 24.9 || swapPercent > 25.1 {
+		t.Fatalf("swapPercent = %.1f, want ~25.0", swapPercent)
+	}
+}
+
+func TestCollectSystemSwapZero(t *testing.T) {
+	memInfo := map[string]uint64{
+		"MemTotal":     16384000,
+		"MemAvailable": 12000000,
+		"SwapTotal":    0,
+		"SwapFree":     0,
+	}
+	swapTotal := memInfo["SwapTotal"]
+	if swapTotal != 0 {
+		t.Fatalf("swapTotal = %d, want 0", swapTotal)
+	}
+}
+
 func TestDiskInfoUsesBavail(t *testing.T) {
 	info, err := diskInfo(config.Disk{Path: "/"})
 	if err != nil {

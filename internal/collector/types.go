@@ -15,6 +15,9 @@ type SystemData struct {
 	MemTotal    uint64 // bytes
 	MemUsed     uint64 // bytes
 	MemPercent  float64
+	SwapTotal   uint64  // bytes
+	SwapUsed    uint64  // bytes
+	SwapPercent float64
 	LoadAvg     [3]float64
 	Disks       []DiskInfo
 	NetRxRate   float64 // bytes/sec download
