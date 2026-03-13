@@ -19,6 +19,7 @@ func newTestModel() Model {
 		collapsedStacks: make(map[string]bool),
 		containerRows:   10,
 		cpuHistory:      components.NewRingBuffer(60),
+		ramHistory:      components.NewRingBuffer(60),
 		diskWarned:      make(map[string]bool),
 		shownWarnings:   make(map[string]bool),
 	}

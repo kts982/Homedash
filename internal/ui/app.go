@@ -68,6 +68,7 @@ type Model struct {
 	dockerHost  string
 
 	cpuHistory      *components.RingBuffer
+	ramHistory      *components.RingBuffer
 	focusedPanel    Panel
 	scrollOffset    int
 	containerRows   int
@@ -199,6 +200,7 @@ func NewModel(options ModelOptions) Model {
 
 	return Model{
 		cpuHistory:             components.NewRingBuffer(60),
+		ramHistory:             components.NewRingBuffer(60),
 		focusedPanel:           PanelContainers,
 		containerRows:          10,
 		collapsedStacks:        state.Load(),
@@ -375,6 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			m.systemData = msg.Data
 			m.cpuHistory.Push(msg.Data.CPUPercent)
+			m.ramHistory.Push(msg.Data.MemPercent)
 
 			// Disk threshold warnings
 			for _, d := range msg.Data.Disks {
