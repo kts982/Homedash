@@ -1354,36 +1354,31 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		return dashboardLayoutMetrics{}
 	}
 
-	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
+	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
 
-	topHeight := 11
-	var topRow string
-	if m.isNarrow() {
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory, m.ramHistory,
-			m.width, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			m.width, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
-	} else {
-		leftWidth := m.width * 40 / 100
-		if leftWidth < 35 {
-			leftWidth = 35
-		}
-		rightWidth := m.width - leftWidth
-		systemPanel := panels.RenderSystem(
-			m.systemData, m.cpuHistory, m.ramHistory,
-			leftWidth, topHeight,
-			m.focusedPanel == PanelSystem)
-		weatherPanel := panels.RenderWeather(
-			m.weatherData, m.weatherErr, m.weatherRetries,
-			rightWidth, topHeight,
-			m.focusedPanel == PanelWeather)
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, weatherPanel)
+	// Compute system panel height dynamically.
+	// Left column: 2 (CPU spark+gauge) + 2 (RAM spark+gauge) + disks
+	// Right column: 4 (LOAD, NET, MEM, SWAP)
+	// Panel chrome: border(2) + title(1) = 3
+	leftLines := 4 + len(m.systemData.Disks)
+	rightLines := 4
+	contentLines := leftLines
+	if rightLines > contentLines {
+		contentLines = rightLines
 	}
+	if contentLines > 12 {
+		contentLines = 12
+	}
+	topHeight := contentLines + 3 // +3 for panel chrome
+
+	systemPanel := panels.RenderSystem(
+		m.systemData, m.cpuHistory, m.ramHistory,
+		m.width, topHeight,
+		m.focusedPanel == PanelSystem)
+	topRow := systemPanel
+
+	// Measure actual rendered height to avoid wrapping surprises
+	topLines := renderedLineCount(topRow)
 
 	previewBar := panels.RenderPreview(
 		m.selectedContainer(),
@@ -1404,7 +1399,6 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, bottomBars...)
 
 	headerLines := renderedLineCount(header)
-	topLines := renderedLineCount(topRow)
 	bottomLines := renderedLineCount(bottomSection)
 	containerChrome := 4 // border(2) + title(1) + column header(1)
 	if m.filtering || m.searchInput.Value() != "" {
