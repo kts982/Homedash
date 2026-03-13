@@ -35,3 +35,65 @@ func Gauge(label string, percent float64, width int) string {
 
 	return labelStyle.Render(label) + " " + filledStr + emptyStr + " " + pctStyle.Render(pctStr)
 }
+
+// GaugeWithDetail renders a gauge with usage/capacity text centered on the bar.
+// Example: /data  ███ 105G/250G ░░░  40%
+func GaugeWithDetail(label string, percent float64, detail string, width int) string {
+	labelStyle := lipgloss.NewStyle().
+		Foreground(styles.TextSecondary).
+		Bold(true).
+		Width(6)
+
+	pctStr := fmt.Sprintf("%3.0f%%", percent)
+	// Bar width = total width - label(6) - space(1) - space(1) - pct(4)
+	barWidth := width - 6 - 1 - 1 - 4
+	if barWidth < 5 {
+		barWidth = 5
+	}
+
+	detailLen := len(detail)
+	filled := int(float64(barWidth) * percent / 100)
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	color := styles.GaugeColor(percent)
+	detailStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+
+	// If the bar is wide enough, overlay the detail text centered on the bar
+	if detailLen+2 <= barWidth { // +2 for spaces around detail
+		// Center position for the detail text
+		pad := (barWidth - detailLen) / 2
+		padRight := barWidth - detailLen - pad
+
+		// Build bar with detail overlaid
+		var bar strings.Builder
+		// Left portion of bar (before detail)
+		if pad <= filled {
+			bar.WriteString(lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", pad)))
+		} else {
+			bar.WriteString(lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", filled)))
+			bar.WriteString(lipgloss.NewStyle().Foreground(styles.BgFocus).Render(strings.Repeat("░", pad-filled)))
+		}
+		// Detail text
+		bar.WriteString(detailStyle.Render(detail))
+		// Right portion of bar (after detail)
+		rightStart := pad + detailLen
+		if rightStart < filled {
+			bar.WriteString(lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", filled-rightStart)))
+			bar.WriteString(lipgloss.NewStyle().Foreground(styles.BgFocus).Render(strings.Repeat("░", padRight-(filled-rightStart))))
+		} else {
+			remaining := barWidth - rightStart
+			if remaining < 0 {
+				remaining = 0
+			}
+			bar.WriteString(lipgloss.NewStyle().Foreground(styles.BgFocus).Render(strings.Repeat("░", remaining)))
+		}
+
+		pctStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
+		return labelStyle.Render(label) + " " + bar.String() + " " + pctStyle.Render(pctStr)
+	}
+
+	// Fall back to regular gauge if detail doesn't fit
+	return Gauge(label, percent, width)
+}

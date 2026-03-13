@@ -18,11 +18,12 @@ func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.
 		return renderSystemSingleColumn(data, cpuHistory, ramHistory, innerWidth, width, height, focused)
 	}
 
+	colGap := 2
 	leftWidth := innerWidth * 55 / 100
 	if leftWidth < 30 {
 		leftWidth = 30
 	}
-	rightWidth := innerWidth - leftWidth
+	rightWidth := innerWidth - leftWidth - colGap
 
 	// Left column: sparklines + gauges
 	var leftLines []string
@@ -50,10 +51,11 @@ func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.
 	// RAM gauge
 	leftLines = append(leftLines, components.Gauge("RAM", data.MemPercent, leftWidth))
 
-	// Disk gauges
+	// Disk gauges with usage/capacity
 	for _, d := range data.Disks {
 		label := fmt.Sprintf("%-6s", d.Mount)
-		leftLines = append(leftLines, components.Gauge(label, d.Percent, leftWidth))
+		detail := fmt.Sprintf("%s / %s", collector.FormatBytes(d.Used), collector.FormatBytes(d.Total))
+		leftLines = append(leftLines, components.GaugeWithDetail(label, d.Percent, detail, leftWidth))
 	}
 
 	// Right column: text stats
@@ -97,10 +99,11 @@ func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.
 	leftCol := strings.Join(leftLines, "\n")
 	rightCol := strings.Join(rightLines, "\n")
 
-	// Pad right column to rightWidth so JoinHorizontal aligns properly
+	// Pad columns with gap between them
 	rightColStyled := lipgloss.NewStyle().Width(rightWidth).Render(rightCol)
+	gap := strings.Repeat(" ", colGap)
 
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, rightColStyled)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, gap, rightColStyled)
 	return components.Panel("SYSTEM", content, width, height, focused)
 }
 
@@ -139,10 +142,11 @@ func renderSystemSingleColumn(data collector.SystemData, cpuHistory, ramHistory 
 	lines = append(lines, "  "+components.Sparkline(ramHistory.Data(), sparkWidth, styles.Secondary)+" "+sparkLabel)
 	lines = append(lines, components.Gauge("RAM", data.MemPercent, innerWidth))
 
-	// Disks
+	// Disks with usage/capacity
 	for _, d := range data.Disks {
 		label := fmt.Sprintf("%-6s", d.Mount)
-		lines = append(lines, components.Gauge(label, d.Percent, innerWidth))
+		detail := fmt.Sprintf("%s / %s", collector.FormatBytes(d.Used), collector.FormatBytes(d.Total))
+		lines = append(lines, components.GaugeWithDetail(label, d.Percent, detail, innerWidth))
 	}
 
 	// LOAD
