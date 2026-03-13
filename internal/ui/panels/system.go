@@ -28,9 +28,13 @@ func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.
 	var leftLines []string
 
 	// CPU sparkline
-	sparkWidth := leftWidth - 2
+	// Account for indent(2) + space(1) + label "(2m)"(4) = 7 chars of overhead
+	sparkWidth := leftWidth - 7
 	if sparkWidth > 60 {
 		sparkWidth = 60
+	}
+	if sparkWidth < 1 {
+		sparkWidth = 1
 	}
 	cpuSpark := components.Sparkline(cpuHistory.Data(), sparkWidth, styles.Primary)
 	sparkLabel := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("(2m)")
@@ -115,9 +119,13 @@ func renderSwapLine(data collector.SystemData, labelStyle lipgloss.Style) string
 func renderSystemSingleColumn(data collector.SystemData, cpuHistory, ramHistory *components.RingBuffer, innerWidth, width, height int, focused bool) string {
 	var lines []string
 
-	sparkWidth := innerWidth - 2
+	// Account for indent(2) + space(1) + label "(2m)"(4) = 7 chars of overhead
+	sparkWidth := innerWidth - 7
 	if sparkWidth > 60 {
 		sparkWidth = 60
+	}
+	if sparkWidth < 1 {
+		sparkWidth = 1
 	}
 	sparkLabel := lipgloss.NewStyle().Foreground(styles.TextMuted).Render("(2m)")
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary).Bold(true).Width(6)
