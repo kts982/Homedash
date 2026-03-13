@@ -410,7 +410,7 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 	m.recalcLayout()
 
 	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, 11, m.focusedPanel == PanelSystem)
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
@@ -451,7 +451,7 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 	m.recalcLayout()
 
 	header := panels.RenderHeader(m.systemData, m.width, m.TestMode)
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.width, 11, m.focusedPanel == PanelSystem)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, 11, m.focusedPanel == PanelSystem)
 	weatherPanel := panels.RenderWeather(m.weatherData, m.weatherErr, m.weatherRetries, m.width, 11, m.focusedPanel == PanelWeather)
 	topRow := lipgloss.JoinVertical(lipgloss.Left, systemPanel, weatherPanel)
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
