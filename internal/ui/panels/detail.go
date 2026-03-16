@@ -3,6 +3,7 @@ package panels
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, ho
 		}
 		if addrLine := detailAddressLine(meta.Networks); addrLine != "" {
 			infoLines = append(infoLines,
-				formatDetailLine(labelStyle, valueStyle, "Addr", addrLine, innerWidth))
+				formatDetailLine(labelStyle, valueStyle, "Network", addrLine, innerWidth))
 		}
 		if publishLine := detailPublishedPortLine(meta.PublishedPorts, innerWidth); publishLine != "" {
 			infoLines = append(infoLines,
@@ -102,21 +103,17 @@ func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, ho
 	}
 
 	if meta != nil {
-		if len(meta.Mounts) > 0 {
-			var volParts []string
-			for _, mt := range meta.Mounts {
-				src := mt.Source
-				if len(src) > 25 {
-					src = "..." + src[len(src)-22:]
-				}
-				volParts = append(volParts, src+" → "+mt.Destination)
-			}
+		if mountsLine := detailMountLine(meta.Mounts, innerWidth); mountsLine != "" {
 			infoLines = append(infoLines,
-				formatDetailLine(labelStyle, valueStyle, "Vols", strings.Join(volParts, ", "), innerWidth))
+				formatDetailLine(labelStyle, valueStyle, "Mounts", mountsLine, innerWidth))
 		}
 		if composeLine := detailComposeLine(meta.Labels); composeLine != "" {
 			infoLines = append(infoLines,
 				formatDetailLine(labelStyle, valueStyle, "Compose", composeLine, innerWidth))
+		}
+		if labelsLine := detailLabelLine(meta.Labels, innerWidth); labelsLine != "" {
+			infoLines = append(infoLines,
+				formatDetailLine(labelStyle, valueStyle, "Labels", labelsLine, innerWidth))
 		}
 	}
 
@@ -180,6 +177,65 @@ func detailComposeLine(labels map[string]string) string {
 		parts = append(parts, "v"+version)
 	}
 	return strings.Join(parts, "  ")
+}
+
+func detailMountLine(mounts []collector.Mount, innerWidth int) string {
+	parts := make([]string, 0, len(mounts))
+	for _, mt := range mounts {
+		src := strings.TrimSpace(mt.Source)
+		if len(src) > 25 {
+			src = "..." + src[len(src)-22:]
+		}
+		if src == "" {
+			src = "-"
+		}
+
+		dest := strings.TrimSpace(mt.Destination)
+		if dest == "" {
+			dest = "-"
+		}
+
+		prefix := strings.TrimSpace(mt.Type)
+		if prefix == "" {
+			prefix = "mount"
+		}
+		mode := strings.TrimSpace(mt.Mode)
+		if mode != "" && mode != "-" {
+			prefix += ":" + mode
+		}
+
+		parts = append(parts, prefix+" "+src+" → "+dest)
+	}
+	return summarizeDetailItems(parts, ", ", detailValueWidth(innerWidth))
+}
+
+func detailLabelLine(labels map[string]string, innerWidth int) string {
+	if len(labels) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		if strings.HasPrefix(key, "com.docker.compose.") {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(labels[key])
+		if value == "" {
+			parts = append(parts, key)
+			continue
+		}
+		parts = append(parts, key+"="+value)
+	}
+	return summarizeDetailItems(parts, ", ", detailValueWidth(innerWidth))
 }
 
 func detailAddressLine(networks []collector.NetworkAddress) string {
@@ -455,7 +511,7 @@ func RenderDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logSearch)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logSearch)
 
 	// Slice visible log lines
 	endIdx := scrollOffset + logContentHeight
@@ -666,7 +722,7 @@ func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth 
 	}
 }
 
-func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logSearch ...LogSearch) string {
+func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logFollowing bool, logSearch ...LogSearch) string {
 	titleStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
@@ -684,27 +740,36 @@ func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCo
 	case detailLogStateError:
 		titleText = "LOGS (error)"
 		statusStyle = lipgloss.NewStyle().Foreground(styles.Error)
+	case detailLogStateLoaded:
+		if logFollowing {
+			titleText = "LOGS (live)"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.Success)
+		}
 	}
 	title := titleStyle.Render(titleText)
 
-	statusText := ""
+	var statusParts []string
 	switch state {
 	case detailLogStateLoaded:
-		statusText = fmt.Sprintf("%d lines", lineCount)
+		if logFollowing {
+			statusParts = append(statusParts, "following")
+		}
+		statusParts = append(statusParts, fmt.Sprintf("%d lines", lineCount))
 	case detailLogStateLoading:
-		statusText = "fetching tail"
+		statusParts = append(statusParts, "fetching tail")
 	case detailLogStateWaiting:
-		statusText = "following"
+		statusParts = append(statusParts, "following")
 	case detailLogStateEmpty:
-		statusText = "no output"
+		statusParts = append(statusParts, "no output")
 	case detailLogStateError:
-		statusText = "refresh failed"
+		statusParts = append(statusParts, "refresh failed")
 	}
 	if lineCount > 0 {
 		endPos := min(scrollOffset+logContentHeight, lineCount)
-		statusText = fmt.Sprintf("%s  %d-%d/%d", statusText, scrollOffset+1, endPos, lineCount)
+		statusParts = append(statusParts, fmt.Sprintf("%d-%d/%d", scrollOffset+1, endPos, lineCount))
 	}
 	// Append search match info
+	statusText := strings.Join(statusParts, "  ")
 	if len(logSearch) > 0 && logSearch[0].Query != "" {
 		ls := logSearch[0]
 		if ls.Total > 0 {

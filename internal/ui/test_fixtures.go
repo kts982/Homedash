@@ -10,19 +10,24 @@ import (
 func collectMockSystemCmd() tea.Msg {
 	return SystemDataMsg{
 		Data: collector.SystemData{
-			Hostname:   "synthetic-host",
-			Uptime:     48 * time.Hour,
-			CPUPercent: 12.5,
-			CPUCount:   8,
-			MemTotal:   16 * 1024 * 1024 * 1024,
-			MemUsed:    4 * 1024 * 1024 * 1024,
-			MemPercent: 25.0,
-			LoadAvg:    [3]float64{1.0, 0.5, 0.2},
+			Hostname:     "synthetic-host",
+			Uptime:       48 * time.Hour,
+			CPUPercent:   12.5,
+			CPUCount:     8,
+			RunningTasks: 2,
+			TotalTasks:   214,
+			MemTotal:     16 * 1024 * 1024 * 1024,
+			MemUsed:      4 * 1024 * 1024 * 1024,
+			MemPercent:   25.0,
+			OpenFiles:    4500,
+			MaxFiles:     1000000,
+			LoadAvg:      [3]float64{1.0, 0.5, 0.2},
 			Disks: []collector.DiskInfo{
-				{Mount: "/data", Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024, Percent: 40.0},
+				{Mount: "System", Total: 512 * 1024 * 1024 * 1024, Used: 64 * 1024 * 1024 * 1024, Percent: 12.5},
+				{Mount: "T1-Ext", Total: 2 * 1024 * 1024 * 1024 * 1024, Used: 1024 * 1024 * 1024 * 1024, Percent: 50.0},
 			},
 			SwapTotal:   4 * 1024 * 1024 * 1024, // 4G
-			SwapUsed:    256 * 1024 * 1024,       // 256M
+			SwapUsed:    256 * 1024 * 1024,      // 256M
 			SwapPercent: 6.25,
 			NetRxRate:   1024 * 1024,
 			NetTxRate:   512 * 1024,
@@ -114,10 +119,10 @@ func collectMockDetailCmd(containerID string) tea.Msg {
 	return ContainerDetailMsg{
 		ContainerID: containerID,
 		Detail: collector.ContainerDetail{
-			CreatedAt: time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
-			StartedAt: time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC),
+			CreatedAt:     time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
+			StartedAt:     time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC),
 			RestartPolicy: "always",
-			Command: "/usr/bin/mock-entrypoint.sh",
+			Command:       "/usr/bin/mock-entrypoint.sh",
 			Mounts: []collector.Mount{
 				{Source: "/mock/source", Destination: "/mock/dest", Mode: "ro", Type: "bind"},
 			},

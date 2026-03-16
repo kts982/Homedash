@@ -8,22 +8,26 @@ import (
 )
 
 type SystemData struct {
-	Hostname    string
-	Uptime      time.Duration
-	CPUPercent  float64
-	CPUCount    int
-	MemTotal    uint64 // bytes
-	MemUsed     uint64 // bytes
-	MemPercent  float64
-	SwapTotal   uint64  // bytes
-	SwapUsed    uint64  // bytes
-	SwapPercent float64
-	LoadAvg     [3]float64
-	Disks       []DiskInfo
-	NetRxRate   float64 // bytes/sec download
-	NetTxRate   float64 // bytes/sec upload
-	Warnings    []string
-	CollectedAt time.Time
+	Hostname     string
+	Uptime       time.Duration
+	CPUPercent   float64
+	CPUCount     int
+	RunningTasks int
+	TotalTasks   int
+	MemTotal     uint64 // bytes
+	MemUsed      uint64 // bytes
+	MemPercent   float64
+	SwapTotal    uint64 // bytes
+	SwapUsed     uint64 // bytes
+	SwapPercent  float64
+	OpenFiles    uint64
+	MaxFiles     uint64
+	LoadAvg      [3]float64
+	Disks        []DiskInfo
+	NetRxRate    float64 // bytes/sec download
+	NetTxRate    float64 // bytes/sec upload
+	Warnings     []string
+	CollectedAt  time.Time
 }
 
 type DiskInfo struct {

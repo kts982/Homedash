@@ -112,6 +112,50 @@ func TestRebuildDisplayItemsFilter(t *testing.T) {
 	}
 }
 
+func TestRebuildDisplayItemsFilterMatchesImageAndStateTokens(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "nginx", Stack: "web", Image: "nginx:latest", State: "running", Health: "healthy"},
+			{Name: "postgres", Stack: "db", Image: "postgres:16", State: "exited", Health: "-"},
+			{Name: "api", Stack: "web", Image: "ghcr.io/example/api:v1", State: "running", Health: "healthy"},
+		},
+	}
+	m.searchInput.SetValue("state:running image:nginx")
+
+	m.rebuildDisplayItems()
+
+	if len(m.displayItems) != 2 {
+		t.Fatalf("len(displayItems) = %d, want 2 (group + container)", len(m.displayItems))
+	}
+	if m.visibleContainers != 1 {
+		t.Fatalf("visibleContainers = %d, want 1", m.visibleContainers)
+	}
+	if m.displayItems[1].Container == nil || m.displayItems[1].Container.Name != "nginx" {
+		t.Fatalf("filtered container = %#v, want nginx", m.displayItems[1].Container)
+	}
+}
+
+func TestRebuildDisplayItemsFilterMatchesHealthToken(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "web", Stack: "prod", State: "running", Health: "healthy"},
+			{Name: "worker", Stack: "prod", State: "running", Health: "unhealthy"},
+		},
+	}
+	m.searchInput.SetValue("health:unhealthy")
+
+	m.rebuildDisplayItems()
+
+	if len(m.displayItems) != 2 {
+		t.Fatalf("len(displayItems) = %d, want 2 (group + container)", len(m.displayItems))
+	}
+	if got := m.displayItems[1].Container.Name; got != "worker" {
+		t.Fatalf("filtered container = %q, want %q", got, "worker")
+	}
+}
+
 func TestRebuildDisplayItemsFilterAutoExpands(t *testing.T) {
 	m := newTestModel()
 	m.collapsedStacks["db"] = true
@@ -147,6 +191,48 @@ func TestRebuildDisplayItemsSortedGroups(t *testing.T) {
 	}
 	if m.displayItems[2].StackName != "zebra" {
 		t.Fatalf("second group = %q, want %q", m.displayItems[2].StackName, "zebra")
+	}
+}
+
+func TestRebuildDisplayItemsSortsByCPU(t *testing.T) {
+	m := newTestModel()
+	m.dashboardSort = DashboardSortCPU
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "alpha-web", Stack: "alpha", State: "running", CPUPerc: 2.0},
+			{Name: "alpha-db", Stack: "alpha", State: "running", CPUPerc: 1.0},
+			{Name: "beta-web", Stack: "beta", State: "running", CPUPerc: 5.0},
+		},
+	}
+
+	m.rebuildDisplayItems()
+
+	if got := m.displayItems[0].StackName; got != "beta" {
+		t.Fatalf("first group = %q, want %q", got, "beta")
+	}
+	if got := m.displayItems[2].StackName; got != "alpha" {
+		t.Fatalf("second group = %q, want %q", got, "alpha")
+	}
+}
+
+func TestRebuildDisplayItemsSortsByUnhealthyFirst(t *testing.T) {
+	m := newTestModel()
+	m.dashboardSort = DashboardSortUnhealthy
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "healthy", Stack: "", State: "running", Health: "healthy"},
+			{Name: "broken", Stack: "", State: "running", Health: "unhealthy"},
+			{Name: "starting", Stack: "", State: "running", Health: "starting"},
+		},
+	}
+
+	m.rebuildDisplayItems()
+
+	if got := m.displayItems[0].Container.Name; got != "broken" {
+		t.Fatalf("first container = %q, want %q", got, "broken")
+	}
+	if got := m.displayItems[1].Container.Name; got != "starting" {
+		t.Fatalf("second container = %q, want %q", got, "starting")
 	}
 }
 
@@ -417,9 +503,9 @@ func TestRecalcLayoutMatchesRenderedContainerRowsInNarrowLayout(t *testing.T) {
 		contentLines = 12
 	}
 	topHeight := contentLines + 3
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem, "")
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width, "")
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 
 	countLines2 := func(s string) int {
@@ -463,9 +549,9 @@ func TestHandleMouseIgnoresClicksBelowRenderedContainerRows(t *testing.T) {
 		contentLines = 12
 	}
 	topHeight := contentLines + 3
-	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem)
+	systemPanel := panels.RenderSystem(m.systemData, m.cpuHistory, m.ramHistory, m.width, topHeight, m.focusedPanel == PanelSystem, "")
 	previewBar := panels.RenderPreview(nil, nil, m.confirmAction, m.dashboardActionTargetName, m.actionResult, m.width)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width)
+	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, false, m.width, "")
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, previewBar, helpBar)
 	expectedRows := m.height - (strings.Count(header, "\n") + 1) - (strings.Count(systemPanel, "\n") + 1) - (strings.Count(bottomSection, "\n") + 1) - 5
 	if expectedRows < 0 {
@@ -565,6 +651,116 @@ func TestHandleDashboardKeyOpensStackQuickMenu(t *testing.T) {
 	}
 }
 
+func TestHandleDashboardKeyPgDownMovesByPage(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.containerRows = 4
+	m.displayItems = make([]DisplayItem, 10)
+
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Code: tea.KeyPgDown}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.selectedIndex != 3 {
+		t.Fatalf("selectedIndex = %d, want 3 after pgdown", updated.selectedIndex)
+	}
+	if updated.scrollOffset != 0 {
+		t.Fatalf("scrollOffset = %d, want 0 after first pgdown", updated.scrollOffset)
+	}
+}
+
+func TestHandleDashboardKeyPgUpMovesByPage(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.containerRows = 4
+	m.displayItems = make([]DisplayItem, 10)
+	m.selectedIndex = 6
+	m.scrollOffset = 4
+
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Code: tea.KeyPgUp}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.selectedIndex != 3 {
+		t.Fatalf("selectedIndex = %d, want 3 after pgup", updated.selectedIndex)
+	}
+	if updated.scrollOffset != 3 {
+		t.Fatalf("scrollOffset = %d, want 3 after pgup", updated.scrollOffset)
+	}
+}
+
+func TestHandleDashboardKeyHomeAndEndJumpSelection(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.containerRows = 4
+	m.displayItems = make([]DisplayItem, 10)
+	m.selectedIndex = 4
+	m.scrollOffset = 2
+
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Code: tea.KeyEnd}, &m)
+	updated := updatedModel.(*Model)
+	if updated.selectedIndex != 9 {
+		t.Fatalf("selectedIndex = %d, want 9 after end", updated.selectedIndex)
+	}
+	if updated.scrollOffset != 6 {
+		t.Fatalf("scrollOffset = %d, want 6 after end", updated.scrollOffset)
+	}
+
+	updatedModel, _ = handleDashboardKey(tea.KeyPressMsg{Code: tea.KeyHome}, updated)
+	updated = updatedModel.(*Model)
+	if updated.selectedIndex != 0 {
+		t.Fatalf("selectedIndex = %d, want 0 after home", updated.selectedIndex)
+	}
+	if updated.scrollOffset != 0 {
+		t.Fatalf("scrollOffset = %d, want 0 after home", updated.scrollOffset)
+	}
+}
+
+func TestHandleDashboardKeyLOpensStackDetail(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.selectedIndex = 0
+	m.displayItems = []DisplayItem{
+		{
+			Kind:         DisplayGroup,
+			StackName:    "media",
+			RunningCount: 2,
+			StoppedCount: 1,
+		},
+	}
+
+	updatedModel, cmd := handleDashboardKey(tea.KeyPressMsg{Text: "l"}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.viewMode != ViewDetail {
+		t.Fatalf("viewMode = %d, want %d", updated.viewMode, ViewDetail)
+	}
+	if updated.detailStackName != "media" {
+		t.Fatalf("detailStackName = %q, want %q", updated.detailStackName, "media")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want stack log fetch command")
+	}
+}
+
+func TestHandleDashboardKeyCyclesSortMode(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.displayItems = []DisplayItem{
+		{Kind: DisplayContainer, Container: &collector.Container{ID: "web", Name: "web", State: "running"}},
+	}
+
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Text: "o"}, &m)
+	updated := updatedModel.(*Model)
+	if updated.dashboardSort != DashboardSortCPU {
+		t.Fatalf("dashboardSort = %v, want %v", updated.dashboardSort, DashboardSortCPU)
+	}
+
+	updatedModel, _ = handleDashboardKey(tea.KeyPressMsg{Text: "o"}, updated)
+	updated = updatedModel.(*Model)
+	if updated.dashboardSort != DashboardSortMemory {
+		t.Fatalf("dashboardSort = %v, want %v", updated.dashboardSort, DashboardSortMemory)
+	}
+}
+
 func TestHandleDashboardKeySetsStackConfirmAction(t *testing.T) {
 	m := newTestModel()
 	m.focusedPanel = PanelContainers
@@ -625,6 +821,32 @@ func TestExecuteQuickMenuItemLogsOpensStackDetail(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("cmd = nil, want stack log fetch command")
+	}
+}
+
+func TestHandleDashboardKeyLOpensContainerDetail(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+	m.selectedIndex = 0
+	container := &collector.Container{ID: "web", Name: "web", Stack: "media", State: "running"}
+	m.displayItems = []DisplayItem{
+		{
+			Kind:      DisplayContainer,
+			Container: container,
+		},
+	}
+
+	updatedModel, cmd := handleDashboardKey(tea.KeyPressMsg{Text: "l"}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.viewMode != ViewDetail {
+		t.Fatalf("viewMode = %d, want %d", updated.viewMode, ViewDetail)
+	}
+	if updated.detailContainerID != "web" {
+		t.Fatalf("detailContainerID = %q, want %q", updated.detailContainerID, "web")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want detail fetch command")
 	}
 }
 
@@ -737,6 +959,70 @@ func TestUpdateStackActionMsgNoopStaysCompact(t *testing.T) {
 	}
 	if updated.notifications.current() != nil {
 		t.Fatalf("notification = %#v, want nil on noop stack action", updated.notifications.current())
+	}
+}
+
+func TestUpdateDockerDataMsgNotifiesOnHealthTransition(t *testing.T) {
+	m := newTestModel()
+	m.dockerBaselineSet = true
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{ID: "web-1", Name: "web", State: "running", Health: "healthy"},
+		},
+	}
+
+	updatedModel, _ := m.Update(DockerDataMsg{
+		Data: collector.DockerData{
+			Containers: []collector.Container{
+				{ID: "web-1", Name: "web", State: "running", Health: "unhealthy"},
+			},
+		},
+	})
+	updated := updatedModel.(Model)
+
+	n := updated.notifications.current()
+	if n == nil {
+		t.Fatal("notification = nil, want health transition notification")
+	}
+	if got, want := n.Message, "web health healthy -> unhealthy"; got != want {
+		t.Fatalf("notification message = %q, want %q", got, want)
+	}
+	if n.Level != levelError {
+		t.Fatalf("notification level = %d, want %d", n.Level, levelError)
+	}
+}
+
+func TestHandleDashboardKeyTogglesAlertsOpen(t *testing.T) {
+	m := newTestModel()
+	m.focusedPanel = PanelContainers
+
+	updatedModel, _ := handleDashboardKey(tea.KeyPressMsg{Text: "a"}, &m)
+	updated := updatedModel.(*Model)
+	if !updated.alertsOpen {
+		t.Fatal("alertsOpen = false, want true after first toggle")
+	}
+
+	updatedModel, _ = handleDashboardKey(tea.KeyPressMsg{Text: "a"}, updated)
+	updated = updatedModel.(*Model)
+	if updated.alertsOpen {
+		t.Fatal("alertsOpen = true, want false after second toggle")
+	}
+}
+
+func TestDashboardFreshnessLabel(t *testing.T) {
+	now := time.Now()
+
+	if got := dashboardFreshnessLabel(time.Time{}, 5*time.Second, false, now); got != "" {
+		t.Fatalf("dashboardFreshnessLabel(zero) = %q, want empty", got)
+	}
+	if got := dashboardFreshnessLabel(now.Add(-1500*time.Millisecond), 5*time.Second, false, now); got != "2s ago" {
+		t.Fatalf("dashboardFreshnessLabel(recent) = %q, want %q", got, "2s ago")
+	}
+	if got := dashboardFreshnessLabel(now.Add(-12*time.Second), 5*time.Second, false, now); got != "stale 12s" {
+		t.Fatalf("dashboardFreshnessLabel(stale) = %q, want %q", got, "stale 12s")
+	}
+	if got := dashboardFreshnessLabel(now.Add(-12*time.Second), 5*time.Second, true, now); got != "12s ago" {
+		t.Fatalf("dashboardFreshnessLabel(paused) = %q, want %q", got, "12s ago")
 	}
 }
 

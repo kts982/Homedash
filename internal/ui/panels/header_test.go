@@ -102,10 +102,16 @@ func TestRenderHeaderWeatherErrorNoData(t *testing.T) {
 
 func TestRenderSystemTwoColumn(t *testing.T) {
 	data := collector.SystemData{
+		Uptime:     49 * time.Hour,
 		CPUPercent: 50, MemPercent: 30, CPUCount: 4,
+		RunningTasks: 2, TotalTasks: 214,
+		OpenFiles: 2100, MaxFiles: 1000000,
 		MemTotal: 16 * 1024 * 1024 * 1024, MemUsed: 5 * 1024 * 1024 * 1024,
 		LoadAvg: [3]float64{1.0, 0.5, 0.2},
-		Disks:   []collector.DiskInfo{{Mount: "/", Percent: 40, Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024}},
+		Disks: []collector.DiskInfo{
+			{Mount: "/", Percent: 40, Total: 100 * 1024 * 1024 * 1024, Used: 40 * 1024 * 1024 * 1024},
+			{Mount: "/data", Percent: 60, Total: 200 * 1024 * 1024 * 1024, Used: 120 * 1024 * 1024 * 1024},
+		},
 		NetRxRate: 1024 * 1024, NetTxRate: 512 * 1024,
 		SwapTotal: 4 * 1024 * 1024 * 1024, SwapUsed: 256 * 1024 * 1024, SwapPercent: 6.25,
 	}
@@ -114,10 +120,10 @@ func TestRenderSystemTwoColumn(t *testing.T) {
 	cpu.Push(50)
 	ram.Push(30)
 
-	view := RenderSystem(data, cpu, ram, 120, 10, false)
+	view := RenderSystem(data, cpu, ram, 120, 10, false, "")
 	plain := stripHeaderANSI(view)
 
-	for _, want := range []string{"CPU", "RAM", "LOAD", "NET", "MEM", "SWAP"} {
+	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "HOT"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("want %q in system panel, got %q", want, plain)
 		}
@@ -133,7 +139,7 @@ func TestRenderSystemSwapDisabled(t *testing.T) {
 	cpu := components.NewRingBuffer(60)
 	ram := components.NewRingBuffer(60)
 
-	view := RenderSystem(data, cpu, ram, 120, 10, false)
+	view := RenderSystem(data, cpu, ram, 120, 10, false, "")
 	plain := stripHeaderANSI(view)
 
 	if !strings.Contains(plain, "disabled") {
@@ -151,12 +157,52 @@ func TestRenderSystemNarrowFallback(t *testing.T) {
 	ram := components.NewRingBuffer(60)
 
 	// width < 90 triggers single-column fallback
-	view := RenderSystem(data, cpu, ram, 60, 15, false)
+	view := RenderSystem(data, cpu, ram, 60, 15, false, "")
 	plain := stripHeaderANSI(view)
 
-	for _, want := range []string{"CPU", "RAM", "LOAD", "NET", "MEM", "SWAP"} {
+	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "HOT"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("want %q in narrow system panel, got %q", want, plain)
 		}
+	}
+}
+
+func TestRenderSystemShowsFreshnessInTitle(t *testing.T) {
+	data := collector.SystemData{
+		CPUPercent: 50, MemPercent: 30, CPUCount: 4,
+		MemTotal: 16 * 1024 * 1024 * 1024, MemUsed: 5 * 1024 * 1024 * 1024,
+	}
+	cpu := components.NewRingBuffer(60)
+	ram := components.NewRingBuffer(60)
+
+	view := RenderSystem(data, cpu, ram, 120, 10, false, "2s ago")
+	plain := stripHeaderANSI(view)
+
+	if !strings.Contains(plain, "SYSTEM · 2s ago") {
+		t.Fatalf("want freshness label in system title, got %q", plain)
+	}
+}
+
+func TestRenderSystemShowsUnlimitedFileLimit(t *testing.T) {
+	data := collector.SystemData{
+		CPUPercent:   50,
+		MemPercent:   30,
+		CPUCount:     4,
+		OpenFiles:    4500,
+		MaxFiles:     9223372036854775807,
+		RunningTasks: 2,
+		TotalTasks:   214,
+		MemTotal:     16 * 1024 * 1024 * 1024,
+		MemUsed:      5 * 1024 * 1024 * 1024,
+		LoadAvg:      [3]float64{1.0, 0.5, 0.2},
+	}
+	cpu := components.NewRingBuffer(60)
+	ram := components.NewRingBuffer(60)
+
+	view := RenderSystem(data, cpu, ram, 120, 10, false, "")
+	plain := stripHeaderANSI(view)
+
+	if !strings.Contains(plain, "FILES") || !strings.Contains(plain, "unlimited") {
+		t.Fatalf("want unlimited file limit in system panel, got %q", plain)
 	}
 }

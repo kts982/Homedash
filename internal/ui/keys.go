@@ -211,6 +211,54 @@ func stackActionAvailable(item DisplayItem, action string) bool {
 	}
 }
 
+func dashboardMaxIndex(m *Model) int {
+	maxIdx := len(m.displayItems) - 1
+	if maxIdx < 0 {
+		return 0
+	}
+	return maxIdx
+}
+
+func dashboardPageStep(m *Model) int {
+	if m.width > 0 && m.height > 0 {
+		m.containerRows = m.measureDashboardLayout().containerRows
+	}
+	step := m.containerRows - 1
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
+func moveDashboardSelection(m *Model, delta int) {
+	maxIdx := dashboardMaxIndex(m)
+	m.selectedIndex += delta
+	if m.selectedIndex < 0 {
+		m.selectedIndex = 0
+	}
+	if m.selectedIndex > maxIdx {
+		m.selectedIndex = maxIdx
+	}
+	m.trackSelection()
+	m.ensureVisible()
+}
+
+func (m *Model) openDashboardLogs() tea.Cmd {
+	if m.focusedPanel != PanelContainers || m.selectedIndex >= len(m.displayItems) {
+		return nil
+	}
+
+	item := m.displayItems[m.selectedIndex]
+	if item.Kind == DisplayGroup {
+		return m.enterStackDetailView(item.StackName)
+	}
+	if item.Kind == DisplayContainer && item.Container != nil {
+		return m.enterDetailView(item.Container)
+	}
+
+	return nil
+}
+
 func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	// Handle confirmation first when an action is pending
 	if m.confirmAction != "" && (m.dashboardActionContainerID != "" || m.dashboardActionStackName != "") {
@@ -241,21 +289,29 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.focusedPanel = (m.focusedPanel - 1 + panelCount) % panelCount
 	case "j", "down":
 		if m.focusedPanel == PanelContainers {
-			maxIdx := len(m.displayItems) - 1
-			if maxIdx < 0 {
-				maxIdx = 0
-			}
-			if m.selectedIndex < maxIdx {
-				m.selectedIndex++
-			}
-			m.trackSelection()
-			m.ensureVisible()
+			moveDashboardSelection(m, 1)
 		}
 	case "k", "up":
 		if m.focusedPanel == PanelContainers {
-			if m.selectedIndex > 0 {
-				m.selectedIndex--
-			}
+			moveDashboardSelection(m, -1)
+		}
+	case "pgdown":
+		if m.focusedPanel == PanelContainers {
+			moveDashboardSelection(m, dashboardPageStep(m))
+		}
+	case "pgup":
+		if m.focusedPanel == PanelContainers {
+			moveDashboardSelection(m, -dashboardPageStep(m))
+		}
+	case "home":
+		if m.focusedPanel == PanelContainers {
+			m.selectedIndex = 0
+			m.trackSelection()
+			m.ensureVisible()
+		}
+	case "end":
+		if m.focusedPanel == PanelContainers {
+			m.selectedIndex = dashboardMaxIndex(m)
 			m.trackSelection()
 			m.ensureVisible()
 		}
@@ -274,6 +330,22 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 				cmd := m.enterDetailView(item.Container)
 				return m, cmd
 			}
+		}
+	case "l":
+		if cmd := m.openDashboardLogs(); cmd != nil {
+			return m, cmd
+		}
+	case "o":
+		if m.focusedPanel == PanelContainers {
+			m.trackSelection()
+			m.dashboardSort = m.dashboardSort.Next()
+			m.rebuildDisplayItems()
+			m.ensureVisible()
+		}
+	case "a":
+		if m.viewMode == ViewDashboard {
+			m.alertsOpen = !m.alertsOpen
+			m.recalcLayout()
 		}
 	case " ", "space":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {
