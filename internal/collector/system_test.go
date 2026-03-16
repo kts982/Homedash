@@ -115,6 +115,95 @@ func TestParseNetDev(t *testing.T) {
 	}
 }
 
+func TestParseLoadAvg(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantLoad    [3]float64
+		wantRunning int
+		wantTotal   int
+		wantOK      bool
+	}{
+		{
+			name:        "valid loadavg with tasks",
+			input:       "0.33 0.44 0.55 2/214 12345\n",
+			wantLoad:    [3]float64{0.33, 0.44, 0.55},
+			wantRunning: 2,
+			wantTotal:   214,
+			wantOK:      true,
+		},
+		{
+			name:   "rejects malformed load values",
+			input:  "oops 0.44 0.55 2/214 12345\n",
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			load, running, total, ok := parseLoadAvg(tc.input)
+			if ok != tc.wantOK {
+				t.Fatalf("parseLoadAvg() ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if load != tc.wantLoad || running != tc.wantRunning || total != tc.wantTotal {
+				t.Fatalf("parseLoadAvg() = (%v, %d, %d), want (%v, %d, %d)", load, running, total, tc.wantLoad, tc.wantRunning, tc.wantTotal)
+			}
+		})
+	}
+}
+
+func TestParseFileUsage(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileNr   string
+		fileMax  string
+		wantOpen uint64
+		wantMax  uint64
+		wantOK   bool
+	}{
+		{
+			name:     "prefers file-max and subtracts unused handles",
+			fileNr:   "4096\t128\t1048576\n",
+			fileMax:  "2097152\n",
+			wantOpen: 3968,
+			wantMax:  2097152,
+			wantOK:   true,
+		},
+		{
+			name:     "falls back to file-nr limit",
+			fileNr:   "1024\t0\t524288\n",
+			fileMax:  "",
+			wantOpen: 1024,
+			wantMax:  524288,
+			wantOK:   true,
+		},
+		{
+			name:    "rejects malformed input",
+			fileNr:  "broken data\n",
+			fileMax: "oops\n",
+			wantOK:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			openFiles, maxFiles, ok := parseFileUsage(tc.fileNr, tc.fileMax)
+			if ok != tc.wantOK {
+				t.Fatalf("parseFileUsage() ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if openFiles != tc.wantOpen || maxFiles != tc.wantMax {
+				t.Fatalf("parseFileUsage() = (%d, %d), want (%d, %d)", openFiles, maxFiles, tc.wantOpen, tc.wantMax)
+			}
+		})
+	}
+}
+
 func TestParseMemInfo(t *testing.T) {
 	tests := []struct {
 		name   string

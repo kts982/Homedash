@@ -29,7 +29,12 @@ type stackSummarySegment struct {
 	style       lipgloss.Style
 }
 
-func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool, testMode bool) string {
+type containerSummaryItem struct {
+	label string
+	style lipgloss.Style
+}
+
+func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool, testMode bool, sortLabel string, shownCount int, freshnessLabel string) string {
 	innerWidth := width - 4
 
 	// Adaptive columns based on available width
@@ -101,20 +106,52 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 		}
 		rows = append(rows, row)
 	}
+	if len(rows) == 0 {
+		emptyText := "No containers available"
+		if searchInput.Value() != "" {
+			emptyText = "No containers match current filter"
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(styles.TextMuted).Render(emptyText))
+	}
 
 	// Status line
-	refreshNoteText := "[5s refresh]"
-	if testMode {
-		refreshNoteText = "[test mode]"
+	summaryItems := []containerSummaryItem{
+		{
+			label: fmt.Sprintf("%d/%d running", running, total),
+			style: lipgloss.NewStyle().Foreground(styles.TextSecondary),
+		},
 	}
-	refreshNote := lipgloss.NewStyle().Foreground(styles.TextMuted).Render(refreshNoteText)
-	summary := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(
-		fmt.Sprintf("(%d/%d running)", running, total))
+	if searchInput.Value() != "" {
+		summaryItems = append(summaryItems, containerSummaryItem{
+			label: fmt.Sprintf("%d shown", shownCount),
+			style: lipgloss.NewStyle().Foreground(styles.TextSecondary),
+		})
+	}
+	if sortLabel != "" {
+		summaryItems = append(summaryItems, containerSummaryItem{
+			label: renderContainerSortSummary(sortLabel),
+			style: lipgloss.NewStyle(),
+		})
+	}
+	if testMode {
+		summaryItems = append(summaryItems, containerSummaryItem{
+			label: "test mode",
+			style: lipgloss.NewStyle().Foreground(styles.TextMuted),
+		})
+	} else if freshnessLabel != "" {
+		summaryItems = append(summaryItems, containerSummaryItem{
+			label: freshnessLabel,
+			style: lipgloss.NewStyle().Foreground(styles.TextMuted),
+		})
+	}
+	summary := renderContainerSummary(summaryItems)
 
 	// 12 = visual width of " CONTAINERS " added by Panel(" "+title+" ")
 	titleMaxWidth := innerWidth - 12
-	spacer := max(0, titleMaxWidth-lipgloss.Width(summary)-lipgloss.Width(refreshNote)-1)
-	titleExtra := " " + summary + strings.Repeat(" ", spacer) + refreshNote
+	titleExtra := " " + summary
+	if lipgloss.Width(titleExtra) > titleMaxWidth {
+		titleExtra = " " + lipgloss.NewStyle().Inline(true).MaxWidth(max(1, titleMaxWidth)).Render(summary)
+	}
 
 	content := headerLine + "\n" + strings.Join(rows, "\n")
 
@@ -132,6 +169,24 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 	}
 
 	return components.Panel("CONTAINERS"+titleExtra, content, width, visibleRows+4, focused)
+}
+
+func renderContainerSummary(items []containerSummaryItem) string {
+	chromeStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	sep := chromeStyle.Render(", ")
+
+	var parts []string
+	for _, item := range items {
+		parts = append(parts, item.style.Render(item.label))
+	}
+
+	return chromeStyle.Render("(") + strings.Join(parts, sep) + chromeStyle.Render(")")
+}
+
+func renderContainerSortSummary(sortLabel string) string {
+	prefix := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	value := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
+	return prefix.Render("sort:") + value.Render(sortLabel)
 }
 
 func formatGroupHeader(name string, running, total, unhealthy, starting, stopped int, collapsed bool, width int) string {

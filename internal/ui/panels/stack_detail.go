@@ -23,11 +23,15 @@ type StackDetail struct {
 }
 
 type StackDetailContainer struct {
-	Name   string
-	State  string
-	Health string
-	Image  string
-	Ports  string
+	Name    string
+	State   string
+	Health  string
+	Image   string
+	Ports   string
+	CPUPerc float64
+	MemUsed uint64
+	NetRx   uint64
+	NetTx   uint64
 }
 
 func StackDetailInfoPanelHeight(stack *StackDetail, width int) int {
@@ -93,7 +97,7 @@ func RenderStackDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logSearch)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logSearch)
 
 	endIdx := scrollOffset + logContentHeight
 	if endIdx > len(logLines) {
@@ -116,14 +120,18 @@ func stackDetailInfoLines(stack *StackDetail, innerWidth int) []string {
 	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
 	summary := stackDetailSummary(stack)
+	hotspots := stackDetailHotspotsLine(stack.Containers, innerWidth)
 	members := stackDetailMembersLine(stack.Containers, innerWidth)
 	images := stackDetailImagesLine(stack.Containers, innerWidth)
 	ports := stackDetailPortsLine(stack.Containers, innerWidth)
 
 	infoLines := []string{
 		formatDetailLine(labelStyle, valueStyle, "Status", summary, innerWidth),
-		formatDetailLine(labelStyle, valueStyle, "Members", members, innerWidth),
 	}
+	if hotspots != "" {
+		infoLines = append(infoLines, formatDetailLine(labelStyle, valueStyle, "Hotspot", hotspots, innerWidth))
+	}
+	infoLines = append(infoLines, formatDetailLine(labelStyle, valueStyle, "Members", members, innerWidth))
 	if images != "" {
 		infoLines = append(infoLines, formatDetailLine(labelStyle, valueStyle, "Images", images, innerWidth))
 	}
@@ -146,6 +154,59 @@ func stackDetailSummary(stack *StackDetail) string {
 		parts = append(parts, fmt.Sprintf("%d stopped", stack.StoppedCount))
 	}
 	return strings.Join(parts, "  ")
+}
+
+func stackDetailHotspotsLine(containers []StackDetailContainer, innerWidth int) string {
+	if len(containers) == 0 {
+		return ""
+	}
+
+	topCPU := containers[0]
+	topMem := containers[0]
+	topNet := containers[0]
+
+	for _, container := range containers[1:] {
+		if container.CPUPerc > topCPU.CPUPerc || (container.CPUPerc == topCPU.CPUPerc && container.Name < topCPU.Name) {
+			topCPU = container
+		}
+		if container.MemUsed > topMem.MemUsed || (container.MemUsed == topMem.MemUsed && container.Name < topMem.Name) {
+			topMem = container
+		}
+		if betterStackDetailNetHotspot(container, topNet) {
+			topNet = container
+		}
+	}
+
+	parts := []string{
+		fmt.Sprintf("CPU %s %.1f%%", topCPU.Name, topCPU.CPUPerc),
+		fmt.Sprintf("Mem %s %s", topMem.Name, collector.FormatBytes(topMem.MemUsed)),
+		fmt.Sprintf("Net %s %s rx / %s tx", topNet.Name, collector.FormatBytes(topNet.NetRx), collector.FormatBytes(topNet.NetTx)),
+	}
+
+	return summarizeDetailItems(parts, "  ", detailValueWidth(innerWidth))
+}
+
+func betterStackDetailNetHotspot(candidate, current StackDetailContainer) bool {
+	candidateTotal := candidate.NetRx + candidate.NetTx
+	currentTotal := current.NetRx + current.NetTx
+
+	candidateRunning := candidate.State == "running"
+	currentRunning := current.State == "running"
+	if candidateRunning != currentRunning {
+		return candidateRunning
+	}
+
+	candidateHasTraffic := candidateTotal > 0
+	currentHasTraffic := currentTotal > 0
+	if candidateHasTraffic != currentHasTraffic {
+		return candidateHasTraffic
+	}
+
+	if candidateTotal != currentTotal {
+		return candidateTotal > currentTotal
+	}
+
+	return candidate.Name < current.Name
 }
 
 func stackDetailMembersLine(containers []StackDetailContainer, innerWidth int) string {

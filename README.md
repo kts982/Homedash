@@ -45,14 +45,15 @@ Full-screen container and stack logs, detail metadata, and quick actions without
 
 - **Unified homelab view** - host metrics, Docker containers, and quick actions in one terminal UI
 - **Compose-stack grouping and summaries** - containers grouped by `com.docker.compose.project`, with collapsible stacks, health counts, and aggregate stack status
-- **Container and stack detail views** - full-screen log viewers with default follow mode on entry, merged stack logs, published port hints, mounts, and start/stop/restart actions
+- **Container and stack detail views** - full-screen log viewers with default follow mode on entry, merged stack logs, stack resource hotspots, richer mount and label metadata, published port hints, and start/stop/restart actions
 - **Log search and navigation** - `/` in detail views highlights matches across logs, with `n`/`N` to cycle through them
 - **Quick-action menu** - `space` opens fast stack or container actions, including stack logs, without leaving the dashboard
-- **System metrics** - full-width two-column panel with CPU/RAM sparklines, gauges with disk usage/capacity detail, load averages, network I/O, swap, and uptime
-- **Container search** - filter dashboard containers by name with `/`
+- **System metrics** - full-width two-column panel with CPU/RAM sparklines, gauges with disk usage/capacity detail, load averages, Linux task and file-handle counts, network I/O, and swap
+- **Dashboard sort and filter** - filter containers by text or field tokens such as `state:running`, `health:unhealthy`, `stack:infra`, and `image:nginx`, then cycle sort modes for quick triage
 - **Deterministic test mode** - `--test-mode` flag for developers to run the TUI with synthetic data and frozen UI elements for stable testing and screenshots (internal helper)
 - **Focus-aware refresh** - background polling pauses automatically when the terminal loses focus on the dashboard, and resumes with an immediate refresh on refocus; detail/log views stay live regardless
-- **Notifications** - Docker state changes, disk warnings, and weather errors
+- **Freshness indicators** - system and container panel titles show current data age and mark stale snapshots when refresh falls behind
+- **Notifications and alerts drawer** - Docker state and health transitions, disk warnings, weather errors, and a persistent problems/history view with timestamps for recent events
 - **Weather** - current conditions via [wttr.in](https://wttr.in), shown in the header bar with responsive degradation
 - **Responsive layout** - works across narrow and wide terminals
 - **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
@@ -156,7 +157,12 @@ system:
 |-----|--------|
 | `tab` / `shift+tab` | Cycle focused panel |
 | `j` / `k` or `Up` / `Down` | Select container / group |
+| `PgUp` / `PgDn` | Page through the container / stack list |
+| `Home` / `End` | Jump to the first / last visible item |
+| `a` | Toggle the alerts / problems drawer |
 | `enter` | Expand/collapse selected stack, or open selected container detail |
+| `l` | Open logs for the selected container or stack |
+| `o` | Cycle dashboard sort mode (`default`, `cpu`, `mem`, `unhealthy`) |
 | `space` | Open quick-action menu for selected container or stack |
 | `/` | Search / filter containers |
 | `s` | Stop selected container or stack (with confirmation) |
@@ -164,6 +170,8 @@ system:
 | `R` | Restart selected container or stack (with confirmation) |
 | `r` | Force refresh all data |
 | `q` / `ctrl+c` | Quit |
+
+Container filtering supports plain text plus field tokens like `state:running`, `health:unhealthy`, `stack:infra`, and `image:nginx`.
 
 ### Detail View
 

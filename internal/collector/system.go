@@ -103,11 +103,21 @@ func CollectSystem(disks []config.Disk) (SystemData, error) {
 
 	// Load average
 	if raw, err := os.ReadFile("/proc/loadavg"); err == nil {
-		fields := strings.Fields(string(raw))
-		if len(fields) >= 3 {
-			data.LoadAvg[0], _ = strconv.ParseFloat(fields[0], 64)
-			data.LoadAvg[1], _ = strconv.ParseFloat(fields[1], 64)
-			data.LoadAvg[2], _ = strconv.ParseFloat(fields[2], 64)
+		if load, running, total, ok := parseLoadAvg(string(raw)); ok {
+			data.LoadAvg = load
+			data.RunningTasks = running
+			data.TotalTasks = total
+		}
+	}
+
+	// File handles
+	fileNrRaw, errFileNr := os.ReadFile("/proc/sys/fs/file-nr")
+	fileMaxRaw, errFileMax := os.ReadFile("/proc/sys/fs/file-max")
+	if errFileNr == nil || errFileMax == nil {
+		openFiles, maxFiles, ok := parseFileUsage(string(fileNrRaw), string(fileMaxRaw))
+		if ok {
+			data.OpenFiles = openFiles
+			data.MaxFiles = maxFiles
 		}
 	}
 
@@ -250,6 +260,67 @@ func parseNetDev(content string) (rxTotal, txTotal uint64) {
 		txTotal += tx
 	}
 	return rxTotal, txTotal
+}
+
+func parseLoadAvg(content string) (load [3]float64, running, total int, ok bool) {
+	fields := strings.Fields(content)
+	if len(fields) < 3 {
+		return load, 0, 0, false
+	}
+
+	var err error
+	load[0], err = strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return load, 0, 0, false
+	}
+	load[1], err = strconv.ParseFloat(fields[1], 64)
+	if err != nil {
+		return load, 0, 0, false
+	}
+	load[2], err = strconv.ParseFloat(fields[2], 64)
+	if err != nil {
+		return load, 0, 0, false
+	}
+
+	if len(fields) >= 4 {
+		taskParts := strings.SplitN(fields[3], "/", 2)
+		if len(taskParts) == 2 {
+			running, _ = strconv.Atoi(taskParts[0])
+			total, _ = strconv.Atoi(taskParts[1])
+		}
+	}
+
+	return load, running, total, true
+}
+
+func parseFileUsage(fileNrContent, fileMaxContent string) (openFiles, maxFiles uint64, ok bool) {
+	fileNrFields := strings.Fields(fileNrContent)
+	if len(fileNrFields) >= 1 {
+		allocated, err := strconv.ParseUint(fileNrFields[0], 10, 64)
+		if err == nil {
+			openFiles = allocated
+			ok = true
+			if len(fileNrFields) >= 2 {
+				unused, err := strconv.ParseUint(fileNrFields[1], 10, 64)
+				if err == nil && unused <= allocated {
+					openFiles = allocated - unused
+				}
+			}
+			if len(fileNrFields) >= 3 {
+				limit, err := strconv.ParseUint(fileNrFields[2], 10, 64)
+				if err == nil {
+					maxFiles = limit
+				}
+			}
+		}
+	}
+
+	if parsedMax, err := strconv.ParseUint(strings.TrimSpace(fileMaxContent), 10, 64); err == nil {
+		maxFiles = parsedMax
+		ok = true
+	}
+
+	return openFiles, maxFiles, ok
 }
 
 func parseMemInfo(content string) map[string]uint64 {

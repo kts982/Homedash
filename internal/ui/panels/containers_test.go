@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
+	"github.com/kostas/homedash/internal/ui/styles"
 )
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -59,7 +60,7 @@ func TestRenderContainersShowsStackSummaryRow(t *testing.T) {
 			StartingCount:  1,
 			StoppedCount:   1,
 		},
-	}, 3, 4, 0, 0, 1, 90, true, input, false, false)
+	}, 3, 4, 0, 0, 1, 90, true, input, false, false, "", 1, "")
 	plain := stripANSI(view)
 
 	for _, want := range []string{"3/4 up", "1 unhealthy", "1 starting", "1 stopped"} {
@@ -72,5 +73,37 @@ func TestRenderContainersShowsStackSummaryRow(t *testing.T) {
 		if lipgloss.Width(line) > 90 {
 			t.Fatalf("RenderContainers() line width = %d, want <= 90", lipgloss.Width(line))
 		}
+	}
+}
+
+func TestRenderContainersShowsSortAndShownCounts(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("state:running")
+	view := RenderContainers(nil, 2, 3, 0, 0, 1, 100, true, input, false, false, "cpu", 2, "2s ago")
+	plain := stripANSI(view)
+
+	for _, want := range []string{"2 shown", "sort:cpu", "2s ago", "No containers match current filter"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderContainers() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
+func TestRenderContainerSortSummaryUsesSeparateStyles(t *testing.T) {
+	if err := styles.ApplyNamed("tokyo-night"); err != nil {
+		t.Fatalf("ApplyNamed() error = %v", err)
+	}
+
+	rendered := renderContainerSortSummary("cpu")
+	plain := stripANSI(rendered)
+
+	if plain != "sort:cpu" {
+		t.Fatalf("renderContainerSortSummary() = %q, want %q", plain, "sort:cpu")
+	}
+	if len(ansiPattern.FindAllString(rendered, -1)) < 2 {
+		t.Fatalf("renderContainerSortSummary() = %q, want multiple ANSI style segments", rendered)
+	}
+	if !strings.Contains(rendered, "sort:") || !strings.Contains(rendered, "cpu") {
+		t.Fatalf("renderContainerSortSummary() = %q, want sort text and value", rendered)
 	}
 }

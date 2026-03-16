@@ -56,6 +56,14 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Text: "ctrl+d"}
 	case "ctrl+u":
 		return tea.KeyPressMsg{Text: "ctrl+u"}
+	case "pgdown":
+		return tea.KeyPressMsg{Code: tea.KeyPgDown}
+	case "pgup":
+		return tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "home":
+		return tea.KeyPressMsg{Code: tea.KeyHome}
+	case "end":
+		return tea.KeyPressMsg{Code: tea.KeyEnd}
 	case " ":
 		return tea.KeyPressMsg{Text: "space"}
 	default:
@@ -284,6 +292,20 @@ func TestIntegration_FilterNarrowsList(t *testing.T) {
 	}
 }
 
+func TestIntegration_FilterStateTokenNarrowsList(t *testing.T) {
+	m := newTestModeModel(t)
+
+	m.searchInput.SetValue("state:running")
+	m.rebuildDisplayItems()
+
+	if len(m.displayItems) != 3 {
+		t.Fatalf("displayItems = %d, want 3 (group + 2 running containers)", len(m.displayItems))
+	}
+	if got := m.displayItems[0].StackName; got != "infra" {
+		t.Fatalf("filtered group = %q, want %q", got, "infra")
+	}
+}
+
 func TestIntegration_FilterEscClears(t *testing.T) {
 	m := newTestModeModel(t)
 
@@ -469,6 +491,66 @@ func TestIntegration_EnterStackDetail(t *testing.T) {
 		batchMsgs := executeBatchCmd(cmd)
 		for _, msg := range batchMsgs {
 			m, _ = applyMsg(m, msg)
+		}
+	}
+}
+
+func TestIntegration_StackLogsShortcut(t *testing.T) {
+	m := newTestModeModel(t)
+	m.focusedPanel = PanelContainers
+
+	m.selectedIndex = 0
+	if m.displayItems[0].Kind != DisplayGroup {
+		t.Fatal("displayItems[0] should be a group header")
+	}
+
+	m, cmd := applyKey(m, "l")
+
+	if m.viewMode != ViewDetail {
+		t.Fatalf("viewMode = %d, want ViewDetail after stack logs shortcut", m.viewMode)
+	}
+	if m.detailStackName == "" {
+		t.Fatal("detailStackName is empty after stack logs shortcut")
+	}
+
+	if cmd != nil {
+		batchMsgs := executeBatchCmd(cmd)
+		for _, msg := range batchMsgs {
+			m, _ = applyMsg(m, msg)
+		}
+	}
+}
+
+func TestIntegration_CycleSortModeReordersDashboard(t *testing.T) {
+	m := newTestModeModel(t)
+	m.focusedPanel = PanelContainers
+
+	m, _ = applyKey(m, "o")
+
+	if m.dashboardSort != DashboardSortCPU {
+		t.Fatalf("dashboardSort = %v, want %v", m.dashboardSort, DashboardSortCPU)
+	}
+	if m.displayItems[0].Kind != DisplayGroup || m.displayItems[0].StackName != "infra" {
+		t.Fatalf("displayItems[0] = %+v, want infra group first after cpu sort", m.displayItems[0])
+	}
+}
+
+func TestIntegration_AlertsDrawerShowsActiveProblems(t *testing.T) {
+	m := newTestModeModel(t)
+	m.focusedPanel = PanelContainers
+	m.dockerData.Containers[1].Health = "unhealthy"
+	m.rebuildDisplayItems()
+
+	m, _ = applyKey(m, "a")
+	if !m.alertsOpen {
+		t.Fatal("alertsOpen = false after pressing a")
+	}
+
+	view := m.View()
+	plain := stripANSIForTest(view)
+	for _, want := range []string{"ALERTS", "Active problems", "1 unhealthy containers"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() = %q, want substring %q", plain, want)
 		}
 	}
 }

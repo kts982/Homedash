@@ -57,6 +57,8 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 			"com.docker.compose.project": "homedash",
 			"com.docker.compose.service": "db",
 			"com.docker.compose.version": "2.24",
+			"homepage.group":             "apps",
+			"traefik.enable":             "true",
 		},
 	}
 
@@ -67,10 +69,12 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 		"Policy   unless-stopped",
 		"Time     start 2026-03-06 12:34Z  create 2026-03-01 08:00Z",
 		"Cmd      /docker-entrypoint.sh postgres -c shared_buffers=256MB",
-		"Addr     app 172.20.0.5  edge 172.21.0.9,fd00::9",
+		"Network  app 172.20.0.5  edge 172.21.0.9,fd00::9",
 		"Publish  *:8080->80/tcp, 127.0.0.1:5432->5432/tcp",
 		"URLs     http://localhost:8080  http://homedash:8080",
+		"Mounts   bind:rw /host/config → /var/lib/postgresql/data",
 		"Compose  homedash/db  v2.24",
+		"Labels   homepage.group=apps, traefik.enable=true",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
@@ -131,6 +135,29 @@ func TestRenderDetailShowsLiveWaitingState(t *testing.T) {
 	}
 }
 
+func TestRenderDetailShowsLiveTitleWhenFollowingLoadedLogs(t *testing.T) {
+	c := &collector.Container{
+		ID:    "abc123",
+		Name:  "svc",
+		Image: "svc:latest",
+		State: "running",
+	}
+
+	view := RenderDetail(c, nil, "", []string{"line one", "line two"}, nil, "", "", 0, 90, 20, true, LogSearch{})
+	plain := stripANSI(view)
+
+	for _, want := range []string{
+		"LOGS (live)",
+		"following",
+		"2 lines",
+		"1-2/2",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("RenderDetail() = %q, want substring %q", plain, want)
+		}
+	}
+}
+
 func TestRenderDetailShowsLogErrorState(t *testing.T) {
 	c := &collector.Container{
 		ID:    "abc123",
@@ -163,9 +190,9 @@ func TestRenderStackDetailShowsSummaryAndLogs(t *testing.T) {
 		CPUPerc:        4.2,
 		MemUsed:        512 * 1024 * 1024,
 		Containers: []StackDetailContainer{
-			{Name: "db", State: "running", Image: "postgres:16", Ports: "5432->5432/tcp"},
-			{Name: "web", State: "running", Health: "unhealthy", Image: "nginx:latest", Ports: "8080->80/tcp"},
-			{Name: "worker", State: "exited", Image: "worker:latest"},
+			{Name: "db", State: "running", Image: "postgres:16", Ports: "5432->5432/tcp", CPUPerc: 1.4, MemUsed: 512 * 1024 * 1024, NetRx: 5 * 1024 * 1024, NetTx: 2 * 1024 * 1024},
+			{Name: "web", State: "running", Health: "unhealthy", Image: "nginx:latest", Ports: "8080->80/tcp", CPUPerc: 3.5, MemUsed: 256 * 1024 * 1024, NetRx: 20 * 1024 * 1024, NetTx: 4 * 1024 * 1024},
+			{Name: "worker", State: "exited", Image: "worker:latest", CPUPerc: 0, MemUsed: 64 * 1024 * 1024, NetRx: 1 * 1024 * 1024, NetTx: 1 * 1024 * 1024},
 		},
 	}
 
@@ -175,6 +202,7 @@ func TestRenderStackDetailShowsSummaryAndLogs(t *testing.T) {
 	for _, want := range []string{
 		"media  stack",
 		"Status   2/3 up  1 unhealthy  1 stopped",
+		"Hotspot  CPU web 3.5%  Mem db 512M  Net web 20M rx / 4M tx",
 		"Members  db running, web running unhealthy, worker exited",
 		"Images   postgres:16, nginx:latest, worker:latest",
 		"Ports    db 5432->5432/tcp, web 8080->80/tcp",
@@ -187,6 +215,18 @@ func TestRenderStackDetailShowsSummaryAndLogs(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("RenderStackDetail() = %q, want substring %q", plain, want)
 		}
+	}
+}
+
+func TestStackDetailHotspotsPreferRunningTraffic(t *testing.T) {
+	line := stackDetailHotspotsLine([]StackDetailContainer{
+		{Name: "archived", State: "exited", NetRx: 0, NetTx: 0},
+		{Name: "api", State: "running", NetRx: 20 * 1024 * 1024, NetTx: 4 * 1024 * 1024},
+		{Name: "worker", State: "running", NetRx: 0, NetTx: 0},
+	}, 120)
+
+	if !strings.Contains(line, "Net api 20M rx / 4M tx") {
+		t.Fatalf("stackDetailHotspotsLine() = %q, want running traffic hotspot", line)
 	}
 }
 

@@ -47,6 +47,60 @@ type DisplayItem struct {
 	Collapsed      bool
 }
 
+type DashboardSortMode int
+
+const (
+	DashboardSortDefault DashboardSortMode = iota
+	DashboardSortCPU
+	DashboardSortMemory
+	DashboardSortUnhealthy
+)
+
+type dashboardStackGroup struct {
+	name       string
+	containers []*collector.Container
+	running    int
+	unhealthy  int
+	starting   int
+	stopped    int
+	cpuTotal   float64
+	memTotal   uint64
+}
+
+type dashboardFilter struct {
+	textTerms []string
+	states    []string
+	health    []string
+	stacks    []string
+	images    []string
+}
+
+func (m DashboardSortMode) Label() string {
+	switch m {
+	case DashboardSortCPU:
+		return "cpu"
+	case DashboardSortMemory:
+		return "mem"
+	case DashboardSortUnhealthy:
+		return "unhealthy"
+	default:
+		return "default"
+	}
+}
+
+func (m DashboardSortMode) Next() DashboardSortMode {
+	switch m {
+	case DashboardSortDefault:
+		return DashboardSortCPU
+	case DashboardSortCPU:
+		return DashboardSortMemory
+	case DashboardSortMemory:
+		return DashboardSortUnhealthy
+	default:
+		return DashboardSortDefault
+	}
+}
+
 type dashboardLayoutMetrics struct {
 	header          string
 	topRow          string
@@ -112,9 +166,12 @@ type Model struct {
 	quickMenuStackName   string
 
 	// Search/Filter
-	searchInput      textinput.Model
-	filtering        bool
-	selectedTarget   string // semantic selection anchor: "c:<id>" or "s:<stack>"
+	searchInput       textinput.Model
+	filtering         bool
+	dashboardSort     DashboardSortMode
+	alertsOpen        bool
+	visibleContainers int
+	selectedTarget    string // semantic selection anchor: "c:<id>" or "s:<stack>"
 
 	// Log search in detail view
 	logSearchInput   textinput.Model
@@ -183,7 +240,7 @@ func NewModel(options ModelOptions) Model {
 	}
 
 	ti := textinput.New()
-	ti.Placeholder = "Filter containers..."
+	ti.Placeholder = "Filter name, stack, image, state:..."
 	ti.Prompt = " / "
 	s := textinput.DefaultDarkStyles()
 	s.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
@@ -420,8 +477,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var notifCmds []tea.Cmd
 		if m.dockerBaselineSet && msg.Err == nil {
 			oldStates := make(map[string]string, len(m.dockerData.Containers))
+			oldHealth := make(map[string]string, len(m.dockerData.Containers))
 			for _, c := range m.dockerData.Containers {
 				oldStates[c.ID] = c.State
+				oldHealth[c.ID] = healthLabel(c.Health)
 			}
 			for _, c := range msg.Data.Containers {
 				oldState, existed := oldStates[c.ID]
@@ -440,6 +499,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if cmd := m.pushNotify(
 						fmt.Sprintf("%s %s -> %s", c.Name, oldState, c.State),
+						level,
+					); cmd != nil {
+						notifCmds = append(notifCmds, cmd)
+					}
+				}
+
+				prevHealth := oldHealth[c.ID]
+				nextHealth := healthLabel(c.Health)
+				if prevHealth != nextHealth {
+					var level notificationLevel
+					switch nextHealth {
+					case "healthy":
+						level = levelInfo
+					case "unhealthy":
+						level = levelError
+					default:
+						level = levelWarning
+					}
+					if cmd := m.pushNotify(
+						fmt.Sprintf("%s health %s -> %s", c.Name, prevHealth, nextHealth),
 						level,
 					); cmd != nil {
 						notifCmds = append(notifCmds, cmd)
@@ -889,7 +968,7 @@ func (m Model) renderQuickMenu(base string) string {
 		BorderForeground(styles.BorderFocus).
 		Background(styles.BgPanel).
 		Foreground(styles.TextPrimary).
-		Width(menuInner + 4). // v2: Width includes borders(2) + padding(2)
+		Width(menuInner+4). // v2: Width includes borders(2) + padding(2)
 		Padding(0, 1).
 		Render(body)
 
@@ -1098,33 +1177,21 @@ func (m *Model) ensureVisible() {
 
 func (m *Model) rebuildDisplayItems() {
 	m.displayItems = m.displayItems[:0]
-	filter := strings.ToLower(m.searchInput.Value())
+	filter := parseDashboardFilter(m.searchInput.Value())
+	m.visibleContainers = 0
 
-	type stackGroup struct {
-		name       string
-		containers []*collector.Container
-		running    int
-		unhealthy  int
-		starting   int
-		stopped    int
-		cpuTotal   float64
-		memTotal   uint64
-	}
-	groupMap := make(map[string]*stackGroup)
-	var groupOrder []string
+	groupMap := make(map[string]*dashboardStackGroup)
+	var groups []*dashboardStackGroup
 	var ungrouped []*collector.Container
 
 	for i := range m.dockerData.Containers {
 		c := &m.dockerData.Containers[i]
 
 		// Filtering
-		if filter != "" {
-			nameMatch := strings.Contains(strings.ToLower(c.Name), filter)
-			stackMatch := strings.Contains(strings.ToLower(c.Stack), filter)
-			if !nameMatch && !stackMatch {
-				continue
-			}
+		if !filter.Matches(c) {
+			continue
 		}
+		m.visibleContainers++
 
 		if c.Stack == "" {
 			ungrouped = append(ungrouped, c)
@@ -1132,9 +1199,9 @@ func (m *Model) rebuildDisplayItems() {
 		}
 		g, exists := groupMap[c.Stack]
 		if !exists {
-			g = &stackGroup{name: c.Stack}
+			g = &dashboardStackGroup{name: c.Stack}
 			groupMap[c.Stack] = g
-			groupOrder = append(groupOrder, c.Stack)
+			groups = append(groups, g)
 		}
 		g.containers = append(g.containers, c)
 		if c.State == "running" {
@@ -1152,20 +1219,21 @@ func (m *Model) rebuildDisplayItems() {
 		g.memTotal += c.MemUsed
 	}
 
-	sort.Strings(groupOrder)
+	sortDashboardGroups(groups, m.dashboardSort)
+	sortDashboardContainers(ungrouped, m.dashboardSort)
 
-	for _, name := range groupOrder {
-		g := groupMap[name]
-		collapsed := m.collapsedStacks[name]
+	for _, g := range groups {
+		sortDashboardContainers(g.containers, m.dashboardSort)
+		collapsed := m.collapsedStacks[g.name]
 
 		// Auto-expand if filtering
-		if filter != "" {
+		if filter.Active() {
 			collapsed = false
 		}
 
 		m.displayItems = append(m.displayItems, DisplayItem{
 			Kind:           DisplayGroup,
-			StackName:      name,
+			StackName:      g.name,
 			ContainerCount: len(g.containers),
 			RunningCount:   g.running,
 			UnhealthyCount: g.unhealthy,
@@ -1212,6 +1280,267 @@ func (m *Model) rebuildDisplayItems() {
 	m.ensureVisible()
 }
 
+func parseDashboardFilter(query string) dashboardFilter {
+	filter := dashboardFilter{}
+	for _, raw := range strings.Fields(strings.ToLower(query)) {
+		switch {
+		case strings.HasPrefix(raw, "state:"):
+			if value := strings.TrimPrefix(raw, "state:"); value != "" {
+				filter.states = append(filter.states, value)
+			}
+		case strings.HasPrefix(raw, "health:"):
+			if value := strings.TrimPrefix(raw, "health:"); value != "" {
+				filter.health = append(filter.health, value)
+			}
+		case strings.HasPrefix(raw, "stack:"):
+			if value := strings.TrimPrefix(raw, "stack:"); value != "" {
+				filter.stacks = append(filter.stacks, value)
+			}
+		case strings.HasPrefix(raw, "image:"):
+			if value := strings.TrimPrefix(raw, "image:"); value != "" {
+				filter.images = append(filter.images, value)
+			}
+		default:
+			filter.textTerms = append(filter.textTerms, raw)
+		}
+	}
+	return filter
+}
+
+func (f dashboardFilter) Active() bool {
+	return len(f.textTerms) > 0 || len(f.states) > 0 || len(f.health) > 0 || len(f.stacks) > 0 || len(f.images) > 0
+}
+
+func (f dashboardFilter) Matches(c *collector.Container) bool {
+	if c == nil {
+		return false
+	}
+
+	name := strings.ToLower(c.Name)
+	stack := strings.ToLower(c.Stack)
+	image := strings.ToLower(c.Image)
+	state := strings.ToLower(c.State)
+	health := strings.ToLower(c.Health)
+
+	if !dashboardMatchAny(state, f.states) {
+		return false
+	}
+	if !dashboardMatchAny(health, f.health) {
+		return false
+	}
+	if !dashboardMatchAny(stack, f.stacks) {
+		return false
+	}
+	if !dashboardMatchAny(image, f.images) {
+		return false
+	}
+
+	for _, term := range f.textTerms {
+		if !strings.Contains(name, term) &&
+			!strings.Contains(stack, term) &&
+			!strings.Contains(image, term) &&
+			!strings.Contains(state, term) &&
+			!strings.Contains(health, term) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func dashboardMatchAny(value string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(value, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortDashboardGroups(groups []*dashboardStackGroup, mode DashboardSortMode) {
+	sort.Slice(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+
+		switch mode {
+		case DashboardSortCPU:
+			if a.cpuTotal != b.cpuTotal {
+				return a.cpuTotal > b.cpuTotal
+			}
+		case DashboardSortMemory:
+			if a.memTotal != b.memTotal {
+				return a.memTotal > b.memTotal
+			}
+		case DashboardSortUnhealthy:
+			if a.unhealthy != b.unhealthy {
+				return a.unhealthy > b.unhealthy
+			}
+			if a.starting != b.starting {
+				return a.starting > b.starting
+			}
+			if a.stopped != b.stopped {
+				return a.stopped > b.stopped
+			}
+		}
+
+		return a.name < b.name
+	})
+}
+
+func sortDashboardContainers(containers []*collector.Container, mode DashboardSortMode) {
+	if mode == DashboardSortDefault {
+		return
+	}
+
+	sort.SliceStable(containers, func(i, j int) bool {
+		a, b := containers[i], containers[j]
+
+		switch mode {
+		case DashboardSortCPU:
+			if a.CPUPerc != b.CPUPerc {
+				return a.CPUPerc > b.CPUPerc
+			}
+		case DashboardSortMemory:
+			if a.MemUsed != b.MemUsed {
+				return a.MemUsed > b.MemUsed
+			}
+		case DashboardSortUnhealthy:
+			if severityA, severityB := dashboardContainerSeverity(a), dashboardContainerSeverity(b); severityA != severityB {
+				return severityA > severityB
+			}
+		}
+
+		return dashboardDefaultContainerLess(a, b)
+	})
+}
+
+func dashboardContainerSeverity(c *collector.Container) int {
+	switch {
+	case c.Health == "unhealthy":
+		return 4
+	case c.Health == "starting":
+		return 3
+	case c.State != "running":
+		return 2
+	case c.Health == "healthy":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func dashboardDefaultContainerLess(a, b *collector.Container) bool {
+	if a.State != b.State {
+		if a.State == "running" {
+			return true
+		}
+		if b.State == "running" {
+			return false
+		}
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.ID < b.ID
+}
+
+func sortIndicatorLabel(mode DashboardSortMode) string {
+	if mode == DashboardSortDefault {
+		return ""
+	}
+	return mode.Label()
+}
+
+func healthLabel(health string) string {
+	health = strings.TrimSpace(health)
+	if health == "" {
+		return "-"
+	}
+	return health
+}
+
+func dashboardFreshnessLabel(collectedAt time.Time, interval time.Duration, paused bool, now time.Time) string {
+	if collectedAt.IsZero() {
+		return ""
+	}
+
+	age := now.Sub(collectedAt)
+	if age < 0 {
+		age = 0
+	}
+	if !paused && interval > 0 && age > interval*2 {
+		return "stale " + formatDashboardAge(age)
+	}
+	return formatDashboardAge(age) + " ago"
+}
+
+func formatDashboardAge(age time.Duration) string {
+	switch {
+	case age < time.Minute:
+		return fmt.Sprintf("%ds", int(age.Round(time.Second)/time.Second))
+	case age < time.Hour:
+		return fmt.Sprintf("%dm", int(age.Round(time.Minute)/time.Minute))
+	default:
+		return fmt.Sprintf("%dh", int(age.Round(time.Hour)/time.Hour))
+	}
+}
+
+func (m Model) activeDashboardAlerts(now time.Time) []notification {
+	var alerts []notification
+
+	if m.dockerErr != nil {
+		alerts = append(alerts, notification{Message: "Docker refresh failed", Level: levelError})
+	}
+	if m.systemErr != nil {
+		alerts = append(alerts, notification{Message: "System refresh failed", Level: levelError})
+	}
+	if m.weatherErr != nil {
+		alerts = append(alerts, notification{Message: "Weather update failed", Level: levelWarning})
+	}
+
+	for _, d := range m.systemData.Disks {
+		if d.Percent >= 90 {
+			alerts = append(alerts, notification{
+				Message: fmt.Sprintf("Disk %s at %.0f%%", d.Mount, d.Percent),
+				Level:   levelWarning,
+			})
+		}
+	}
+	for _, warning := range m.systemData.Warnings {
+		alerts = append(alerts, notification{Message: warning, Level: levelWarning})
+	}
+
+	unhealthy := 0
+	for _, c := range m.dockerData.Containers {
+		if c.Health == "unhealthy" {
+			unhealthy++
+		}
+	}
+	if unhealthy > 0 {
+		alerts = append(alerts, notification{
+			Message: fmt.Sprintf("%d unhealthy containers", unhealthy),
+			Level:   levelError,
+		})
+	}
+
+	paused := !m.focused && m.viewMode == ViewDashboard
+	if !paused {
+		if m.systemRefreshInterval > 0 && !m.systemData.CollectedAt.IsZero() && now.Sub(m.systemData.CollectedAt) > m.systemRefreshInterval*2 {
+			alerts = append(alerts, notification{Message: "System data is stale", Level: levelWarning})
+		}
+		if m.dockerRefreshInterval > 0 && !m.dockerData.CollectedAt.IsZero() && now.Sub(m.dockerData.CollectedAt) > m.dockerRefreshInterval*2 {
+			alerts = append(alerts, notification{Message: "Docker data is stale", Level: levelWarning})
+		}
+		if m.weatherRefreshInterval > 0 && !m.weatherData.CollectedAt.IsZero() && now.Sub(m.weatherData.CollectedAt) > m.weatherRefreshInterval*2 {
+			alerts = append(alerts, notification{Message: "Weather data is stale", Level: levelWarning})
+		}
+	}
+
+	return alerts
+}
+
 func (m Model) View() tea.View {
 	if m.width == 0 {
 		return tea.NewView("Loading...")
@@ -1241,8 +1570,8 @@ func (m Model) View() tea.View {
 		topLines := renderedLineCount(layout.topRow)
 		promptW := lipgloss.Width(m.searchInput.Prompt)
 		c := tea.NewCursor(
-			2+promptW+m.searchInput.Position(),         // panel border(1) + padding(1) + prompt + cursor pos
-			headerLines+topLines+2,                      // border(1) + title(1)
+			2+promptW+m.searchInput.Position(), // panel border(1) + padding(1) + prompt + cursor pos
+			headerLines+topLines+2,             // border(1) + title(1)
 		)
 		c.Shape = tea.CursorBar
 		v.Cursor = c
@@ -1318,6 +1647,15 @@ func (m Model) renderDashboard() string {
 			Container:      item.Container,
 		}
 	}
+	containersFreshness := dashboardFreshnessLabel(
+		m.dockerData.CollectedAt,
+		m.dockerRefreshInterval,
+		!m.focused && m.viewMode == ViewDashboard,
+		time.Now(),
+	)
+	if m.TestMode {
+		containersFreshness = "test mode"
+	}
 
 	containersPanel := panels.RenderContainers(
 		panelItems,
@@ -1325,7 +1663,10 @@ func (m Model) renderDashboard() string {
 		m.scrollOffset, m.selectedIndex, layout.containerRows, m.width,
 		m.focusedPanel == PanelContainers,
 		m.searchInput, m.filtering,
-		m.TestMode)
+		m.TestMode,
+		sortIndicatorLabel(m.dashboardSort),
+		m.visibleContainers,
+		containersFreshness)
 
 	// Quick-action menu overlay
 	if m.quickMenuOpen {
@@ -1355,6 +1696,12 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	}
 
 	header := panels.RenderHeader(m.systemData, m.weatherData, m.weatherErr, m.weatherRetries, m.width, m.TestMode)
+	now := time.Now()
+	paused := !m.focused && m.viewMode == ViewDashboard
+	systemFreshness := dashboardFreshnessLabel(m.systemData.CollectedAt, m.systemRefreshInterval, paused, now)
+	if m.TestMode {
+		systemFreshness = "test mode"
+	}
 
 	// Compute system panel height dynamically.
 	// Panel chrome: border(2) + title(1) = 3
@@ -1380,7 +1727,8 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 	systemPanel := panels.RenderSystem(
 		m.systemData, m.cpuHistory, m.ramHistory,
 		m.width, topHeight,
-		m.focusedPanel == PanelSystem)
+		m.focusedPanel == PanelSystem,
+		systemFreshness)
 	topRow := systemPanel
 
 	// Measure actual rendered height to avoid wrapping surprises
@@ -1394,12 +1742,31 @@ func (m Model) measureDashboardLayout() dashboardLayoutMetrics {
 		m.actionResult,
 		m.width,
 	)
-	helpBar := panels.RenderHelp(panels.DefaultBindings, m.refreshing, !m.focused && m.viewMode == ViewDashboard, m.width)
+	activeAlerts := m.activeDashboardAlerts(now)
+	helpStatus := ""
+	switch {
+	case len(activeAlerts) > 0 && m.alertsOpen:
+		helpStatus = fmt.Sprintf("%d alerts open", len(activeAlerts))
+	case len(activeAlerts) > 0:
+		helpStatus = fmt.Sprintf("%d alerts", len(activeAlerts))
+	case m.alertsOpen:
+		helpStatus = "alerts open"
+	}
+	helpBar := panels.RenderHelp(
+		panels.DefaultBindings,
+		m.refreshing,
+		!m.focused && m.viewMode == ViewDashboard,
+		m.width,
+		helpStatus,
+	)
 	notifBar := renderNotificationBar(&m.notifications, m.width)
 
 	bottomBars := []string{previewBar}
 	if notifBar != "" {
 		bottomBars = append(bottomBars, notifBar)
+	}
+	if m.alertsOpen {
+		bottomBars = append(bottomBars, renderAlertsPanel(activeAlerts, m.notifications.recent(4), m.width))
 	}
 	bottomBars = append(bottomBars, helpBar)
 	bottomSection := lipgloss.JoinVertical(lipgloss.Left, bottomBars...)
@@ -1586,11 +1953,15 @@ func (m Model) detailStackData() *panels.StackDetail {
 			health = "-"
 		}
 		detail.Containers = append(detail.Containers, panels.StackDetailContainer{
-			Name:   c.Name,
-			State:  c.State,
-			Health: health,
-			Image:  c.Image,
-			Ports:  collector.FormatPorts(c.Ports),
+			Name:    c.Name,
+			State:   c.State,
+			Health:  health,
+			Image:   c.Image,
+			Ports:   collector.FormatPorts(c.Ports),
+			CPUPerc: c.CPUPerc,
+			MemUsed: c.MemUsed,
+			NetRx:   c.NetRx,
+			NetTx:   c.NetTx,
 		})
 	}
 	sort.Slice(detail.Containers, func(i, j int) bool {
