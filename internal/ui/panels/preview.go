@@ -30,7 +30,7 @@ func RenderPreview(c *collector.Container, stack *StackPreview, confirmAction, c
 		Padding(0, 1)
 
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	descStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
 	// Action confirmation takes priority
 	if confirmAction != "" && confirmName != "" {

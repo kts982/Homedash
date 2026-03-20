@@ -302,7 +302,7 @@ func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerW
 
 func renderStackDetailActionBar(stack *StackDetail, confirmAction, actionResult string, width int, logFollowing bool, logSearch LogSearch) string {
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	descStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
 	var content string
 	if logSearch.Active {
