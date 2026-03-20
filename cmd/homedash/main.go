@@ -32,6 +32,7 @@ func main() {
 
 	p := tea.NewProgram(
 		ui.NewModel(ui.ModelOptions{
+			Theme:                  cfg.Theme,
 			Disks:                  cfg.System.Disks,
 			DockerHost:             dockerHost,
 			SystemRefreshInterval:  cfg.Refresh.System,

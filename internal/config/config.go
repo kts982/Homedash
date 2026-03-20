@@ -1,12 +1,15 @@
 package config
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +19,29 @@ import (
 const (
 	defaultDockerHost = "unix:///var/run/docker.sock"
 )
+
+var localMountPrefixes = []string{
+	"/mnt",
+	"/media",
+	"/run/media",
+}
+
+var localFilesystemTypes = map[string]struct{}{
+	"btrfs":    {},
+	"exfat":    {},
+	"ext2":     {},
+	"ext3":     {},
+	"ext4":     {},
+	"f2fs":     {},
+	"jfs":      {},
+	"nilfs2":   {},
+	"ntfs":     {},
+	"reiserfs": {},
+	"udf":      {},
+	"vfat":     {},
+	"xfs":      {},
+	"zfs":      {},
+}
 
 type Config struct {
 	Theme   string        `yaml:"theme"`
@@ -44,7 +70,7 @@ type DockerConfig struct {
 }
 
 type fileConfig struct {
-	Theme string `yaml:"theme"`
+	Theme  string `yaml:"theme"`
 	System struct {
 		Disks []Disk `yaml:"disks"`
 	} `yaml:"system"`
@@ -63,7 +89,6 @@ func Default() Config {
 		System: SystemConfig{
 			Disks: []Disk{
 				{Path: "/", Label: "/"},
-				{Path: "/mnt/docker-data", Label: "/data"},
 			},
 		},
 		Refresh: RefreshConfig{
@@ -74,18 +99,26 @@ func Default() Config {
 	}
 }
 
+func Path() (string, error) {
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user config directory: %w", err)
+	}
+	return filepath.Join(configRoot, "homedash", "config.yaml"), nil
+}
+
 func Load() (Config, error) {
 	cfg := Default()
 
-	configRoot, err := os.UserConfigDir()
+	configPath, err := Path()
 	if err != nil {
-		return Config{}, fmt.Errorf("resolve user config directory: %w", err)
+		return Config{}, err
 	}
-	configPath := filepath.Join(configRoot, "homedash", "config.yaml")
 
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			cfg.System.Disks = discoveredOrDefaultDisks()
 			return cfg, nil
 		}
 		return Config{}, fmt.Errorf("read config file %q: %w", configPath, err)
@@ -140,6 +173,45 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+func Save(cfg Config) error {
+	configPath, err := Path()
+	if err != nil {
+		return err
+	}
+
+	normalized, err := normalizeConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	file := fileConfig{
+		Theme: normalized.Theme,
+	}
+	file.System.Disks = append([]Disk(nil), normalized.System.Disks...)
+	file.Refresh.System = normalized.Refresh.System.String()
+	file.Refresh.Docker = normalized.Refresh.Docker.String()
+	file.Refresh.Weather = normalized.Refresh.Weather.String()
+	file.Docker.Host = strings.TrimSpace(normalized.Docker.Host)
+
+	raw, err := yaml.Marshal(&file)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	tmpPath := configPath + ".tmp"
+	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
+		return fmt.Errorf("write temp config %q: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, configPath); err != nil {
+		return fmt.Errorf("replace config %q: %w", configPath, err)
+	}
+	return nil
+}
+
 func (c Config) EffectiveDockerHost() string {
 	if host := strings.TrimSpace(os.Getenv("DOCKER_HOST")); host != "" {
 		return host
@@ -148,6 +220,146 @@ func (c Config) EffectiveDockerHost() string {
 		return host
 	}
 	return defaultDockerHost
+}
+
+func DiscoverDisks() ([]Disk, error) {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return nil, fmt.Errorf("open /proc/mounts: %w", err)
+	}
+	defer f.Close()
+
+	disks, err := discoverDisksFromProcMounts(f)
+	if err != nil {
+		return nil, err
+	}
+	for i, disk := range disks {
+		disks[i], err = validateDisk(i, disk)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return disks, nil
+}
+
+func discoveredOrDefaultDisks() []Disk {
+	disks, err := DiscoverDisks()
+	if err != nil || len(disks) == 0 {
+		return append([]Disk(nil), Default().System.Disks...)
+	}
+	return disks
+}
+
+func discoverDisksFromProcMounts(r io.Reader) ([]Disk, error) {
+	scanner := bufio.NewScanner(r)
+	seen := map[string]struct{}{
+		"/": {},
+	}
+	disks := []Disk{
+		{Path: "/", Label: "/"},
+	}
+
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 3 {
+			continue
+		}
+
+		mountPath := unescapeProcField(fields[1])
+		fsType := fields[2]
+		if !shouldAutoIncludeMount(mountPath, fsType) {
+			continue
+		}
+		if _, ok := seen[mountPath]; ok {
+			continue
+		}
+		seen[mountPath] = struct{}{}
+		disks = append(disks, Disk{Path: mountPath, Label: autoDetectedDiskLabel(mountPath)})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan /proc/mounts: %w", err)
+	}
+
+	sort.Slice(disks[1:], func(i, j int) bool {
+		return disks[1+i].Path < disks[1+j].Path
+	})
+	return disks, nil
+}
+
+func autoDetectedDiskLabel(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." || path == "/" {
+		return "/"
+	}
+	if base := filepath.Base(path); base != "" && base != "." && base != "/" {
+		return base
+	}
+	return path
+}
+
+func shouldAutoIncludeMount(path, fsType string) bool {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "/" {
+		return true
+	}
+	if path == "." || path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	if _, ok := localFilesystemTypes[fsType]; !ok {
+		return false
+	}
+	for _, prefix := range localMountPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func unescapeProcField(value string) string {
+	if !strings.ContainsRune(value, '\\') {
+		return value
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' || i+3 >= len(value) {
+			b.WriteByte(value[i])
+			continue
+		}
+		code, err := strconv.ParseInt(value[i+1:i+4], 8, 32)
+		if err != nil {
+			b.WriteByte(value[i])
+			continue
+		}
+		b.WriteByte(byte(code))
+		i += 3
+	}
+	return b.String()
+}
+
+func normalizeConfig(cfg Config) (Config, error) {
+	if cfg.Refresh.System < 1*time.Second {
+		return Config{}, fmt.Errorf("invalid config: refresh.system must be >= 1s")
+	}
+	if cfg.Refresh.Docker < 3*time.Second {
+		return Config{}, fmt.Errorf("invalid config: refresh.docker must be >= 3s")
+	}
+	if cfg.Refresh.Weather < 1*time.Minute {
+		return Config{}, fmt.Errorf("invalid config: refresh.weather must be >= 1m")
+	}
+
+	normalized := cfg
+	for i, disk := range normalized.System.Disks {
+		d, err := validateDisk(i, disk)
+		if err != nil {
+			return Config{}, err
+		}
+		normalized.System.Disks[i] = d
+	}
+	normalized.Theme = strings.TrimSpace(normalized.Theme)
+	normalized.Docker.Host = strings.TrimSpace(normalized.Docker.Host)
+	return normalized, nil
 }
 
 func parsePositiveDuration(field, value string, minimum time.Duration) (time.Duration, error) {

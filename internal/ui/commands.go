@@ -53,6 +53,13 @@ func weatherRetryCmd(epoch uint64) tea.Cmd {
 	})
 }
 
+func saveSettingsCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		err := config.Save(cfg)
+		return SettingsSavedMsg{Config: cfg, Err: err}
+	}
+}
+
 func collectLogsCmd(containerID string, tail int) tea.Cmd {
 	return func() tea.Msg {
 		lines, err := collector.FetchContainerLogs(containerID, tail)

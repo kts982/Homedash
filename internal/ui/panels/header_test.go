@@ -123,7 +123,7 @@ func TestRenderSystemTwoColumn(t *testing.T) {
 	view := RenderSystem(data, cpu, ram, 120, 10, false, "")
 	plain := stripHeaderANSI(view)
 
-	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "HOT"} {
+	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "PEAK"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("want %q in system panel, got %q", want, plain)
 		}
@@ -160,7 +160,7 @@ func TestRenderSystemNarrowFallback(t *testing.T) {
 	view := RenderSystem(data, cpu, ram, 60, 15, false, "")
 	plain := stripHeaderANSI(view)
 
-	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "HOT"} {
+	for _, want := range []string{"CPU", "RAM", "LOAD", "TASKS", "NET", "FILES", "MEM", "DISKS", "SWAP", "PEAK"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("want %q in narrow system panel, got %q", want, plain)
 		}

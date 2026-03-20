@@ -94,7 +94,7 @@ func RenderSystem(data collector.SystemData, cpuHistory, ramHistory *components.
 
 	// SWAP
 	swapLine := renderSwapLine(data, labelStyle)
-	hotLine := labelStyle.Render("HOT") + " " + renderHotMount(data.Disks)
+	hotLine := labelStyle.Render("PEAK") + " " + renderHotMount(data.Disks)
 	rightLines = append(rightLines, renderSystemStatRow(swapLine, hotLine, rightWidth))
 
 	// Cap content lines
@@ -289,7 +289,7 @@ func renderSystemSingleColumn(data collector.SystemData, cpuHistory, ramHistory 
 	lines = append(lines, renderSystemStatRow(labelStyle.Render("MEM")+" "+valStyle.Render(memText), labelStyle.Render("DISKS")+" "+valStyle.Render(systemDiskSummary(data.Disks)), innerWidth))
 
 	// SWAP
-	lines = append(lines, renderSystemStatRow(renderSwapLine(data, labelStyle), labelStyle.Render("HOT")+" "+renderHotMount(data.Disks), innerWidth))
+	lines = append(lines, renderSystemStatRow(renderSwapLine(data, labelStyle), labelStyle.Render("PEAK")+" "+renderHotMount(data.Disks), innerWidth))
 
 	content := strings.Join(lines, "\n")
 	title := "SYSTEM"

@@ -21,6 +21,7 @@ var DefaultBindings = []KeyBinding{
 	{"PgUp/Dn", "page", "page"},
 	{"Home/End", "jump", "jump"},
 	{"a", "alerts", "alerts"},
+	{"O", "options", "opts"},
 	{"/", "filter", "find"},
 	{"enter", "open/toggle", "open"},
 	{"l", "logs", "logs"},

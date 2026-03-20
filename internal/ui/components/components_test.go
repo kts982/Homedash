@@ -136,3 +136,13 @@ func TestSparklinePadsWhenDataShorterThanWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestGaugeWithDetailTruncatesLongLabelsWithoutWrapping(t *testing.T) {
+	got := stripANSI(GaugeWithDetail("docker-data", 50, "10G / 20G", 50))
+	if strings.Contains(got, "\n") {
+		t.Fatalf("GaugeWithDetail() wrapped long label: %q", got)
+	}
+	if lipgloss.Width(got) != 50 {
+		t.Fatalf("GaugeWithDetail() width = %d, want 50", lipgloss.Width(got))
+	}
+}
