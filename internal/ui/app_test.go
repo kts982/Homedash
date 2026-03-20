@@ -935,11 +935,9 @@ func TestUpdateStackActionMsgIncludesFailedContainerNames(t *testing.T) {
 	n := updated.notifications.current()
 	if n == nil {
 		t.Fatal("notification = nil, want failure notification")
-	}
-	if got, want := n.Message, "Stack media restart failed for web, db, worker, cache"; got != want {
+	} else if got, want := n.Message, "Stack media restart failed for web, db, worker, cache"; got != want {
 		t.Fatalf("notification message = %q, want %q", got, want)
-	}
-	if n.Level != levelError {
+	} else if n.Level != levelError {
 		t.Fatalf("notification level = %d, want %d", n.Level, levelError)
 	}
 }
@@ -983,11 +981,9 @@ func TestUpdateDockerDataMsgNotifiesOnHealthTransition(t *testing.T) {
 	n := updated.notifications.current()
 	if n == nil {
 		t.Fatal("notification = nil, want health transition notification")
-	}
-	if got, want := n.Message, "web health healthy -> unhealthy"; got != want {
+	} else if got, want := n.Message, "web health healthy -> unhealthy"; got != want {
 		t.Fatalf("notification message = %q, want %q", got, want)
-	}
-	if n.Level != levelError {
+	} else if n.Level != levelError {
 		t.Fatalf("notification level = %d, want %d", n.Level, levelError)
 	}
 }

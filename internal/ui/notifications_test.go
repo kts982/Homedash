@@ -20,17 +20,13 @@ func TestNotificationQueuePush(t *testing.T) {
 	n := q.current()
 	if n == nil {
 		t.Fatal("current() returned nil")
-	}
-	if n.Message != "container exited" {
+	} else if n.Message != "container exited" {
 		t.Fatalf("Message = %q, want %q", n.Message, "container exited")
-	}
-	if n.Level != levelError {
+	} else if n.Level != levelError {
 		t.Fatalf("Level = %d, want %d", n.Level, levelError)
-	}
-	if n.ID == 0 {
+	} else if n.ID == 0 {
 		t.Fatal("ID should be non-zero")
-	}
-	if n.At.IsZero() {
+	} else if n.At.IsZero() {
 		t.Fatal("At should be set")
 	}
 }

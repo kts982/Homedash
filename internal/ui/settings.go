@@ -108,17 +108,6 @@ func newSettingsDiskRow(disk config.Disk) settingsDiskRow {
 	}
 }
 
-func (f *settingsForm) applyTheme() {
-	applyThemedTextInputStyles(&f.dockerHost)
-	applyThemedTextInputStyles(&f.systemRefresh)
-	applyThemedTextInputStyles(&f.dockerRefresh)
-	applyThemedTextInputStyles(&f.weatherRefresh)
-	for i := range f.disks {
-		applyThemedTextInputStyles(&f.disks[i].label)
-		applyThemedTextInputStyles(&f.disks[i].path)
-	}
-}
-
 func (f *settingsForm) fieldCount() int {
 	return settingsDiskFieldStart + len(f.disks)*2
 }
@@ -321,9 +310,7 @@ func formatSettingsDuration(duration time.Duration) string {
 	}
 	formatted := duration.String()
 	for _, suffix := range []string{"0s", "0m"} {
-		if strings.HasSuffix(formatted, suffix) {
-			formatted = strings.TrimSuffix(formatted, suffix)
-		}
+		formatted = strings.TrimSuffix(formatted, suffix)
 	}
 	return formatted
 }
