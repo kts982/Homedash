@@ -149,11 +149,9 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 
 The Docker host can also be set via the `DOCKER_HOST` environment variable, which takes precedence over the config file.
 
-### State Persistence
+### Config Examples
 
-HomeDash saves UI state (collapsed stack groups) to `~/.config/homedash/state.json`. This file is managed automatically and does not need manual editing. The state path is not configurable.
-
-### Minimal Config
+#### Minimal Config
 
 ```yaml
 # Just override what you need
@@ -164,6 +162,19 @@ system:
     - path: /mnt/storage
       label: storage
 ```
+
+#### Lower Refresh Rates
+
+```yaml
+refresh:
+  system: 5s
+  docker: 10s
+  weather: 10m
+```
+
+## State File
+
+HomeDash saves UI state (collapsed stack groups) to `~/.config/homedash/state.json`. This file is managed automatically and does not need manual editing. The state path is not configurable.
 
 ## Key Bindings
 
@@ -263,12 +274,7 @@ sudo usermod -aG docker $USER
 
 **Disk not showing** — Check that the mount path in your config is correct and accessible. Inaccessible paths show a warning notification instead of silently failing.
 
-**High CPU usage** — Try increasing refresh intervals in config:
-```yaml
-refresh:
-  system: 5s
-  docker: 10s
-```
+**High CPU usage** — Increase the refresh intervals under [Configuration](#configuration), especially `refresh.system` and `refresh.docker`.
 
 ## License
 
