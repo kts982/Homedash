@@ -227,7 +227,9 @@ func DiscoverDisks() ([]Disk, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open /proc/mounts: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	disks, err := discoverDisksFromProcMounts(f)
 	if err != nil {
