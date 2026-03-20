@@ -2,6 +2,7 @@
 # Place this file at ~/.config/homedash/config.yaml
 #
 # All fields are optional — sensible defaults are used when omitted.
+# If the file does not exist, HomeDash auto-detects local mounts and falls back to /.
 # Unknown fields are rejected (catches typos).
 
 # Color theme: tokyo-night (default), catppuccin, dracula
@@ -10,12 +11,13 @@ theme: tokyo-night
 # System metrics configuration
 system:
   # Disk mounts to monitor
+  # If omitted entirely and no config file exists yet, HomeDash auto-detects local mounts.
   # Each entry needs an absolute path; label is optional (defaults to path)
   disks:
     - path: /
       label: /
-    - path: /mnt/data
-      label: /data
+    - path: /mnt/storage
+      label: storage
 
 # Data refresh intervals (Go duration strings: "2s", "5m", etc.)
 # Minimums enforced: system >= 1s, docker >= 3s, weather >= 1m
