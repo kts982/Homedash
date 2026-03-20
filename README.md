@@ -26,20 +26,32 @@ It reads system data from `/proc`, talks directly to the Docker socket, and opti
 
 ## Screenshots
 
+Screenshots below use the Dracula theme.
+
 ### Dashboard Overview
 
-<img width="800" alt="HomeDash dashboard overview" src="docs/screenshots/dashboard-overview.png" />
-
-Full-width system panel with CPU/RAM sparklines, gauges with disk usage detail, and container state in one view. Weather conditions shown in the header bar.
-
-### Container Detail And Actions
-
-<p>
-<img width="395" alt="HomeDash container detail view" src="docs/screenshots/container-detail.png" />
-<img width="395" alt="HomeDash quick actions menu" src="docs/screenshots/quick-actions.png" />
+<p align="center">
+<img width="900" alt="HomeDash dashboard overview" src="docs/screenshots/dashboard-overview.png" />
 </p>
 
-Full-screen container and stack logs, detail metadata, and quick actions without leaving the TUI.
+Full-width system metrics, grouped Compose stacks, inline health and state, weather in the header, and the dashboard action bar in one view.
+
+### Inspect And Act
+
+<p>
+<img width="430" alt="HomeDash container detail view" src="docs/screenshots/container-detail.png" />
+<img width="430" alt="HomeDash quick actions menu" src="docs/screenshots/quick-actions.png" />
+</p>
+
+Container detail with live logs and metadata, plus the stack or container quick-action popup without leaving the dashboard.
+
+### Alerts Drawer
+
+<p align="center">
+<img width="900" alt="HomeDash alerts drawer" src="docs/screenshots/alerts-drawer.png" />
+</p>
+
+Persistent recent events and problem history stay visible without leaving the main screen.
 
 ## Features
 
@@ -57,7 +69,7 @@ Full-screen container and stack logs, detail metadata, and quick actions without
 - **Weather** - current conditions via [wttr.in](https://wttr.in), shown in the header bar with responsive degradation
 - **Responsive layout** - works across narrow and wide terminals
 - **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
-- **Themes and mouse support** - Tokyo Night, Catppuccin, Dracula, plus click and scroll navigation
+- **Themes, options, and mouse support** - Tokyo Night, Catppuccin, Dracula, an in-app options dialog for theme, disk, refresh, and Docker settings, plus click and scroll navigation
 
 ## Status
 
@@ -114,7 +126,11 @@ make lint
 
 ## Configuration
 
-HomeDash uses a YAML config file at `~/.config/homedash/config.yaml`. All fields are optional — sensible defaults are used when omitted. Unknown fields are rejected to catch typos.
+HomeDash uses a YAML config file at `~/.config/homedash/config.yaml`. All fields are optional, and unknown fields are rejected to catch typos.
+
+If the config file does not exist, HomeDash starts with auto-detected local mounts where possible and falls back to `/` if detection yields nothing useful.
+
+Press `O` on the dashboard to open the Options dialog and save theme, disks, refresh intervals, and Docker host back to this file.
 
 See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 
@@ -123,7 +139,7 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `theme` | string | `tokyo-night` | Color theme: `tokyo-night`, `catppuccin`, `dracula` |
-| `system.disks` | list | `[{path: "/"}]` | Disk mount points to monitor |
+| `system.disks` | list | auto-detected local mounts, with `/` fallback | Disk mount points to monitor |
 | `system.disks[].path` | string | required | Absolute path to mount point |
 | `system.disks[].label` | string | same as path | Display label |
 | `refresh.system` | duration | `2s` | System metrics refresh interval (min: `1s`) |
@@ -160,6 +176,7 @@ system:
 | `PgUp` / `PgDn` | Page through the container / stack list |
 | `Home` / `End` | Jump to the first / last visible item |
 | `a` | Toggle the alerts / problems drawer |
+| `O` | Open the options dialog |
 | `enter` | Expand/collapse selected stack, or open selected container detail |
 | `l` | Open logs for the selected container or stack |
 | `o` | Cycle dashboard sort mode (`default`, `cpu`, `mem`, `unhealthy`) |
