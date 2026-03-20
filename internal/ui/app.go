@@ -959,7 +959,7 @@ func (m Model) renderQuickMenu(base string) string {
 
 	keyStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
-	mutedStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
+	chromeStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
 	titleText := ""
 	statusText := ""
@@ -999,7 +999,7 @@ func (m Model) renderQuickMenu(base string) string {
 	titleLine := nameStyled + strings.Repeat(" ", titleGap) + stateStyled
 
 	// Separator — account for 1-cell padding on each side inside the popup
-	sep := mutedStyle.Render(strings.Repeat("─", menuInner))
+	sep := chromeStyle.Render(strings.Repeat("─", menuInner))
 
 	// Menu items
 	var menuLines []string
@@ -1022,7 +1022,11 @@ func (m Model) renderQuickMenu(base string) string {
 	}
 
 	// Hint
-	hint := mutedStyle.Render("j/k navigate  enter confirm  esc close")
+	hint := strings.Join([]string{
+		keyStyle.Render("j/k") + " " + chromeStyle.Render("navigate"),
+		keyStyle.Render("enter") + " " + chromeStyle.Render("confirm"),
+		keyStyle.Render("esc") + " " + chromeStyle.Render("close"),
+	}, "  ")
 
 	body := titleLine + "\n" + sep + "\n" +
 		strings.Join(menuLines, "\n") + "\n" + sep + "\n" + hint
