@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 type KeyBinding struct {
@@ -21,6 +21,7 @@ var DefaultBindings = []KeyBinding{
 	{"PgUp/Dn", "page", "page"},
 	{"Home/End", "jump", "jump"},
 	{"a", "alerts", "alerts"},
+	{"O", "options", "opts"},
 	{"/", "filter", "find"},
 	{"enter", "open/toggle", "open"},
 	{"l", "logs", "logs"},

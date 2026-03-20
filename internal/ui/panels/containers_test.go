@@ -7,7 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)

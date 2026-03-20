@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kostas/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector"
 )
 
 func TestRenderDetailAcceptsShortContainerID(t *testing.T) {

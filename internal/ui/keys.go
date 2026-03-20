@@ -4,8 +4,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/state"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/state"
 )
 
 type Panel int
@@ -71,6 +71,13 @@ func handleKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 			_ = state.Save(m.collapsedStacks)
 		}
 		return m, tea.Quit
+	}
+
+	if m.settingsOpen {
+		return handleSettingsKey(msg, m)
+	}
+
+	switch msg.String() {
 	case "q":
 		if m.viewMode == ViewDetail {
 			m.clearDetailView()
@@ -346,6 +353,10 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.viewMode == ViewDashboard {
 			m.alertsOpen = !m.alertsOpen
 			m.recalcLayout()
+		}
+	case "O":
+		if m.viewMode == ViewDashboard {
+			return m, m.openSettings()
 		}
 	case " ", "space":
 		if m.focusedPanel == PanelContainers && m.selectedIndex < len(m.displayItems) {

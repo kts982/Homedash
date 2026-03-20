@@ -1,4 +1,4 @@
-module github.com/kostas/homedash
+module github.com/kts982/homedash
 
 go 1.25.4
 

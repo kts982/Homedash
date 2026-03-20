@@ -5,7 +5,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/kostas/homedash/internal/config"
+	"github.com/kts982/homedash/internal/config"
 )
 
 func TestFormatBytes(t *testing.T) {

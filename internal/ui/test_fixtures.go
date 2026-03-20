@@ -4,7 +4,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/kostas/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector"
 )
 
 func collectMockSystemCmd() tea.Msg {

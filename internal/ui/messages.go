@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/kostas/homedash/internal/collector"
+import (
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/config"
+)
 
 // SystemDataMsg carries updated system metrics.
 type SystemDataMsg struct {
@@ -93,4 +96,10 @@ type ContainerDetailMsg struct {
 	ContainerID string
 	Detail      collector.ContainerDetail
 	Err         error
+}
+
+// SettingsSavedMsg carries the result of persisting updated app settings.
+type SettingsSavedMsg struct {
+	Config config.Config
+	Err    error
 }

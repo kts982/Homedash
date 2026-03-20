@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -198,5 +199,104 @@ func TestLoadTheme(t *testing.T) {
 				t.Fatalf("Theme = %q, want %q", cfg.Theme, tt.wantTheme)
 			}
 		})
+	}
+}
+
+func TestDiscoverDisksFromProcMounts(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		"/dev/nvme0n1p2 / ext4 rw,relatime 0 0",
+		"tmpfs /run tmpfs rw,nosuid,nodev 0 0",
+		"/dev/sdb1 /mnt/data xfs rw,relatime 0 0",
+		"/dev/sdc1 /media/kostas/Backup ext4 rw,relatime 0 0",
+		"tank/archive /mnt/archive zfs rw,relatime 0 0",
+		"/dev/nvme0n1p1 /boot/efi vfat rw,relatime 0 0",
+		"/dev/sdd1 /run/media/kostas/USB\\040Disk exfat rw,relatime 0 0",
+	}, "\n"))
+
+	disks, err := discoverDisksFromProcMounts(input)
+	if err != nil {
+		t.Fatalf("discoverDisksFromProcMounts() error = %v", err)
+	}
+
+	var got []string
+	for _, disk := range disks {
+		got = append(got, disk.Path)
+	}
+	want := []string{
+		"/",
+		"/media/kostas/Backup",
+		"/mnt/archive",
+		"/mnt/data",
+		"/run/media/kostas/USB Disk",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len(disks) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("disks[%d] = %q, want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+
+	wantLabels := []string{"/", "Backup", "archive", "data", "USB Disk"}
+	for i := range wantLabels {
+		if disks[i].Label != wantLabels[i] {
+			t.Fatalf("disks[%d].Label = %q, want %q", i, disks[i].Label, wantLabels[i])
+		}
+	}
+}
+
+func TestSaveRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	cfg := Config{
+		Theme: "dracula",
+		System: SystemConfig{
+			Disks: []Disk{
+				{Path: "/", Label: "System"},
+				{Path: "/mnt/archive", Label: "Archive"},
+			},
+		},
+		Refresh: RefreshConfig{
+			System:  3 * time.Second,
+			Docker:  10 * time.Second,
+			Weather: 15 * time.Minute,
+		},
+		Docker: DockerConfig{
+			Host: "tcp://127.0.0.1:2375",
+		},
+	}
+
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "homedash", "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("config file was not created: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if loaded.Theme != cfg.Theme {
+		t.Fatalf("Theme = %q, want %q", loaded.Theme, cfg.Theme)
+	}
+	if loaded.Refresh != cfg.Refresh {
+		t.Fatalf("Refresh = %+v, want %+v", loaded.Refresh, cfg.Refresh)
+	}
+	if loaded.Docker.Host != cfg.Docker.Host {
+		t.Fatalf("Docker.Host = %q, want %q", loaded.Docker.Host, cfg.Docker.Host)
+	}
+	if len(loaded.System.Disks) != len(cfg.System.Disks) {
+		t.Fatalf("len(Disks) = %d, want %d", len(loaded.System.Disks), len(cfg.System.Disks))
+	}
+	for i := range cfg.System.Disks {
+		if loaded.System.Disks[i] != cfg.System.Disks[i] {
+			t.Fatalf("Disk[%d] = %+v, want %+v", i, loaded.System.Disks[i], cfg.System.Disks[i])
+		}
 	}
 }

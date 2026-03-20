@@ -9,9 +9,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/ui/components"
-	"github.com/kostas/homedash/internal/ui/panels"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/ui/components"
+	"github.com/kts982/homedash/internal/ui/panels"
 )
 
 func newTestModel() Model {

@@ -11,12 +11,12 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/config"
-	"github.com/kostas/homedash/internal/state"
-	"github.com/kostas/homedash/internal/ui/components"
-	"github.com/kostas/homedash/internal/ui/panels"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/config"
+	"github.com/kts982/homedash/internal/state"
+	"github.com/kts982/homedash/internal/ui/components"
+	"github.com/kts982/homedash/internal/ui/panels"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 type ViewMode int
@@ -118,6 +118,7 @@ type Model struct {
 	systemData  collector.SystemData
 	dockerData  collector.DockerData
 	weatherData collector.WeatherData
+	themeName   string
 	disks       []config.Disk
 	dockerHost  string
 
@@ -168,6 +169,8 @@ type Model struct {
 	// Search/Filter
 	searchInput       textinput.Model
 	filtering         bool
+	settingsOpen      bool
+	settingsForm      settingsForm
 	dashboardSort     DashboardSortMode
 	alertsOpen        bool
 	visibleContainers int
@@ -206,6 +209,7 @@ type Model struct {
 }
 
 type ModelOptions struct {
+	Theme                  string
 	Disks                  []config.Disk
 	DockerHost             string
 	SystemRefreshInterval  time.Duration
@@ -239,21 +243,8 @@ func NewModel(options ModelOptions) Model {
 		weatherRefresh = defaults.Refresh.Weather
 	}
 
-	ti := textinput.New()
-	ti.Placeholder = "Filter name, stack, image, state:..."
-	ti.Prompt = " / "
-	s := textinput.DefaultDarkStyles()
-	s.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
-	s.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
-	ti.SetStyles(s)
-
-	lsi := textinput.New()
-	lsi.Placeholder = "Search logs..."
-	lsi.Prompt = " / "
-	ls := textinput.DefaultDarkStyles()
-	ls.Focused.Prompt = lipgloss.NewStyle().Foreground(styles.Secondary)
-	ls.Focused.Text = lipgloss.NewStyle().Foreground(styles.TextPrimary)
-	lsi.SetStyles(ls)
+	ti := newThemedTextInput("", "Filter name, stack, image, state:...", " / ", false)
+	lsi := newThemedTextInput("", "Search logs...", " / ", false)
 
 	return Model{
 		cpuHistory:             components.NewRingBuffer(60),
@@ -263,6 +254,7 @@ func NewModel(options ModelOptions) Model {
 		collapsedStacks:        state.Load(),
 		searchInput:            ti,
 		logSearchInput:         lsi,
+		themeName:              normalizeThemeName(options.Theme),
 		disks:                  disks,
 		dockerHost:             dockerHost,
 		systemRefreshInterval:  systemRefresh,
@@ -301,6 +293,69 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) currentEditableConfig() config.Config {
+	return config.Config{
+		Theme: m.themeName,
+		System: config.SystemConfig{
+			Disks: append([]config.Disk(nil), m.disks...),
+		},
+		Refresh: config.RefreshConfig{
+			System:  m.systemRefreshInterval,
+			Docker:  m.dockerRefreshInterval,
+			Weather: m.weatherRefreshInterval,
+		},
+		Docker: config.DockerConfig{
+			Host: m.dockerHost,
+		},
+	}
+}
+
+func (m *Model) openSettings() tea.Cmd {
+	m.settingsForm = newSettingsForm(m.currentEditableConfig(), m.themeName)
+	m.settingsOpen = true
+	m.errorIfSettingsHidden()
+	return m.settingsForm.focusCurrent()
+}
+
+func (m *Model) closeSettings() {
+	m.settingsOpen = false
+	m.settingsForm = settingsForm{}
+}
+
+func (m *Model) errorIfSettingsHidden() {
+	if m.quickMenuOpen {
+		m.closeQuickMenu()
+	}
+	m.alertsOpen = false
+}
+
+func (m *Model) applyRuntimeConfig(cfg config.Config) tea.Cmd {
+	m.themeName = normalizeThemeName(cfg.Theme)
+	_ = styles.ApplyNamed(m.themeName)
+	applyThemedTextInputStyles(&m.searchInput)
+	applyThemedTextInputStyles(&m.logSearchInput)
+	m.disks = append([]config.Disk(nil), cfg.System.Disks...)
+	m.systemRefreshInterval = cfg.Refresh.System
+	m.dockerRefreshInterval = cfg.Refresh.Docker
+	m.weatherRefreshInterval = cfg.Refresh.Weather
+	m.dockerHost = cfg.EffectiveDockerHost()
+	collector.SetDockerHost(m.dockerHost)
+	m.tickEpoch++
+	m.recalcLayout()
+
+	if m.TestMode {
+		return nil
+	}
+	return tea.Batch(
+		func() tea.Msg { return collectSystemCmd(m.disks) },
+		func() tea.Msg { return collectDockerCmd() },
+		func() tea.Msg { return collectWeatherCmd() },
+		systemTickCmd(m.disks, m.systemRefreshInterval, m.tickEpoch),
+		dockerTickCmd(m.dockerRefreshInterval, m.tickEpoch),
+		weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -369,6 +424,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case SettingsSavedMsg:
+		m.settingsForm.saving = false
+		if msg.Err != nil {
+			m.settingsForm.errorText = msg.Err.Error()
+			return m, nil
+		}
+		m.closeSettings()
+		notifyCmd := m.pushNotify("Settings saved", levelInfo)
+		return m, tea.Batch(m.applyRuntimeConfig(msg.Config), notifyCmd)
 	case tea.FocusMsg:
 		m.focused = true
 		if m.viewMode == ViewDashboard && !m.TestMode {
@@ -1683,11 +1747,15 @@ func (m Model) renderDashboard() string {
 		view = strings.Join(lines, "\n")
 	}
 
-	return lipgloss.NewStyle().
+	base := lipgloss.NewStyle().
 		Background(styles.BgBase).
 		Width(m.width).
 		Height(m.height).
 		Render(view)
+	if m.settingsOpen {
+		return m.renderSettingsOverlay(base)
+	}
+	return base
 }
 
 func (m Model) measureDashboardLayout() dashboardLayoutMetrics {

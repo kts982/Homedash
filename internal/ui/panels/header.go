@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 func RenderHeader(data collector.SystemData, weather collector.WeatherData, weatherErr error, weatherRetries int, width int, testMode bool) string {

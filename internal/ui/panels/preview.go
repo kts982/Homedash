@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 type StackPreview struct {

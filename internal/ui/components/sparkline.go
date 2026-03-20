@@ -4,7 +4,7 @@ import (
 	"image/color"
 
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}

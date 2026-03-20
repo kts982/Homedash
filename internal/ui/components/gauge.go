@@ -5,16 +5,11 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 // Gauge renders a horizontal bar gauge: ██████░░░░ 60%
 func Gauge(label string, percent float64, width int) string {
-	labelStyle := lipgloss.NewStyle().
-		Foreground(styles.TextSecondary).
-		Bold(true).
-		Width(6)
-
 	pctStr := fmt.Sprintf("%3.0f%%", percent)
 	// Bar width = total width - label(6) - space(1) - space(1) - pct(4)
 	barWidth := width - 6 - 1 - 1 - 4
@@ -33,17 +28,12 @@ func Gauge(label string, percent float64, width int) string {
 	emptyStr := lipgloss.NewStyle().Foreground(styles.BgFocus).Render(strings.Repeat("░", empty))
 	pctStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
 
-	return labelStyle.Render(label) + " " + filledStr + emptyStr + " " + pctStyle.Render(pctStr)
+	return renderGaugeLabel(label) + " " + filledStr + emptyStr + " " + pctStyle.Render(pctStr)
 }
 
 // GaugeWithDetail renders a gauge with usage/capacity text centered on the bar.
 // Example: /data  ███ 105G/250G ░░░  40%
 func GaugeWithDetail(label string, percent float64, detail string, width int) string {
-	labelStyle := lipgloss.NewStyle().
-		Foreground(styles.TextSecondary).
-		Bold(true).
-		Width(6)
-
 	pctStr := fmt.Sprintf("%3.0f%%", percent)
 	// Bar width = total width - label(6) - space(1) - space(1) - pct(4)
 	barWidth := width - 6 - 1 - 1 - 4
@@ -91,9 +81,19 @@ func GaugeWithDetail(label string, percent float64, detail string, width int) st
 		}
 
 		pctStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
-		return labelStyle.Render(label) + " " + bar.String() + " " + pctStyle.Render(pctStr)
+		return renderGaugeLabel(label) + " " + bar.String() + " " + pctStyle.Render(pctStr)
 	}
 
 	// Fall back to regular gauge if detail doesn't fit
 	return Gauge(label, percent, width)
+}
+
+func renderGaugeLabel(label string) string {
+	return lipgloss.NewStyle().
+		Foreground(styles.TextSecondary).
+		Bold(true).
+		Inline(true).
+		MaxWidth(6).
+		Width(6).
+		Render(label)
 }

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kostas/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector"
 )
 
 func TestStackActionTargets(t *testing.T) {

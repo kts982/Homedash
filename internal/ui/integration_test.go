@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/kts982/homedash/internal/config"
 )
 
 // newTestModeModel creates a Model in test-mode with a realistic terminal size
@@ -140,6 +144,80 @@ func TestIntegration_StartupRenderStability(t *testing.T) {
 		if !strings.Contains(plain, expected) {
 			t.Errorf("View() missing expected content %q", expected)
 		}
+	}
+}
+
+func TestIntegration_SettingsOpenAndClose(t *testing.T) {
+	m := newTestModeModel(t)
+
+	m, _ = applyKey(m, "O")
+	if !m.settingsOpen {
+		t.Fatal("settingsOpen = false after pressing O")
+	}
+	plain := stripANSIForTest(m.View())
+	if !strings.Contains(plain, "Options") {
+		t.Fatalf("View() = %q, want settings overlay title", plain)
+	}
+
+	m, _ = applyKey(m, "esc")
+	if m.settingsOpen {
+		t.Fatal("settingsOpen = true after pressing esc")
+	}
+}
+
+func TestIntegration_SettingsSaveAppliesConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	m := newTestModeModel(t)
+	m, _ = applyKey(m, "O")
+	if !m.settingsOpen {
+		t.Fatal("settingsOpen = false after pressing O")
+	}
+
+	m.settingsForm.cycleTheme(1)
+	m.settingsForm.dockerHost.SetValue("tcp://127.0.0.1:2375")
+	m.settingsForm.systemRefresh.SetValue("3s")
+	m.settingsForm.dockerRefresh.SetValue("7s")
+	m.settingsForm.weatherRefresh.SetValue("10m")
+	m.settingsForm.disks = []settingsDiskRow{
+		newSettingsDiskRow(config.Disk{Path: "/", Label: "System"}),
+		newSettingsDiskRow(config.Disk{Path: "/mnt/archive", Label: "Archive"}),
+	}
+	_ = m.settingsForm.focusCurrent()
+
+	updated, cmd := applyKey(m, "enter")
+	if cmd == nil {
+		t.Fatal("cmd = nil, want settings save command")
+	}
+	msg := cmd()
+	saved, _ := applyMsg(updated, msg)
+
+	if saved.settingsOpen {
+		t.Fatal("settingsOpen = true after successful save")
+	}
+	if saved.themeName != "catppuccin" {
+		t.Fatalf("themeName = %q, want catppuccin", saved.themeName)
+	}
+	if got := saved.dockerHost; got != "tcp://127.0.0.1:2375" {
+		t.Fatalf("dockerHost = %q, want tcp://127.0.0.1:2375", got)
+	}
+	if got := saved.systemRefreshInterval; got != 3*time.Second {
+		t.Fatalf("systemRefreshInterval = %v, want 3s", got)
+	}
+	if got := saved.dockerRefreshInterval; got != 7*time.Second {
+		t.Fatalf("dockerRefreshInterval = %v, want 7s", got)
+	}
+	if got := saved.weatherRefreshInterval; got != 10*time.Minute {
+		t.Fatalf("weatherRefreshInterval = %v, want 10m", got)
+	}
+	if len(saved.disks) != 2 {
+		t.Fatalf("len(disks) = %d, want 2", len(saved.disks))
+	}
+
+	configPath := filepath.Join(tmpDir, "homedash", "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("saved config file missing: %v", err)
 	}
 }
 

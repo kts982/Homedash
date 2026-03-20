@@ -6,10 +6,10 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/config"
-	"github.com/kostas/homedash/internal/ui"
-	"github.com/kostas/homedash/internal/ui/styles"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/config"
+	"github.com/kts982/homedash/internal/ui"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 func main() {
@@ -32,6 +32,7 @@ func main() {
 
 	p := tea.NewProgram(
 		ui.NewModel(ui.ModelOptions{
+			Theme:                  cfg.Theme,
 			Disks:                  cfg.System.Disks,
 			DockerHost:             dockerHost,
 			SystemRefreshInterval:  cfg.Refresh.System,

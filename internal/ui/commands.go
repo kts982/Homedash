@@ -4,9 +4,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/kostas/homedash/internal/collector"
-	"github.com/kostas/homedash/internal/config"
-	"github.com/kostas/homedash/internal/state"
+	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/config"
+	"github.com/kts982/homedash/internal/state"
 )
 
 type stackActionTarget struct {
@@ -51,6 +51,13 @@ func weatherRetryCmd(epoch uint64) tea.Cmd {
 	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
 		return WeatherTickMsg{Epoch: epoch}
 	})
+}
+
+func saveSettingsCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		err := config.Save(cfg)
+		return SettingsSavedMsg{Config: cfg, Err: err}
+	}
 }
 
 func collectLogsCmd(containerID string, tail int) tea.Cmd {
