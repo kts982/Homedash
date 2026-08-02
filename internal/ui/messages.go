@@ -2,6 +2,7 @@ package ui
 
 import (
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 )
 
@@ -83,6 +84,12 @@ type followRestartMsg struct{}
 // they surface as notifications rather than blocking startup.
 type configWarningsMsg struct {
 	warnings []string
+}
+
+// UpdateCheckMsg carries the result of a manual image update check.
+type UpdateCheckMsg struct {
+	Statuses []registry.Status
+	Err      error
 }
 
 // CollapseSaveTickMsg fires after debounce delay to trigger save.

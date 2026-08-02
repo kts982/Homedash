@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 	"github.com/kts982/homedash/internal/state"
 	"github.com/kts982/homedash/internal/ui/components"
@@ -191,6 +192,12 @@ type Model struct {
 	// Terminal background, from tea.BackgroundColorMsg. Assumed dark until
 	// the terminal reports otherwise; selects the theme's light/dark variant.
 	darkBackground bool
+
+	// Image update checks, keyed by image reference. Populated only by an
+	// explicit 'u' press — never by the refresh tick, see checkUpdatesCmd.
+	imageUpdates    map[string]registry.Status
+	updateChecking  bool
+	updateCheckedAt time.Time
 
 	// Log follow mode
 	logFollowing    bool
@@ -867,6 +874,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			applyThemedTextInputStyles(&m.logSearchInput)
 		}
 		return m, nil
+	case UpdateCheckMsg:
+		m.updateChecking = false
+		m.updateCheckedAt = time.Now()
+		if msg.Err != nil {
+			return m, m.pushNotify("Update check failed: "+msg.Err.Error(), levelError)
+		}
+
+		m.imageUpdates = make(map[string]registry.Status, len(msg.Statuses))
+		available, failed := 0, 0
+		for _, s := range msg.Statuses {
+			m.imageUpdates[s.Ref] = s
+			switch s.State {
+			case registry.StateAvailable:
+				available++
+			case registry.StateError:
+				failed++
+			}
+		}
+
+		// Report unchecked images explicitly. Silently showing "no updates"
+		// when some images could not be reached would be misleading.
+		summary := "All images up to date"
+		level := levelInfo
+		if available > 0 {
+			summary = fmt.Sprintf("%d image update(s) available", available)
+			level = levelWarning
+		}
+		if failed > 0 {
+			summary += fmt.Sprintf(" — %d image(s) could not be checked", failed)
+		}
+		return m, m.pushNotify(summary, level)
+
 	case configWarningsMsg:
 		var cmds []tea.Cmd
 		for _, w := range msg.warnings {
@@ -1262,7 +1301,7 @@ func (m *Model) recalcLayout() {
 	case m.detailStackName != "":
 		infoPanelHeight = panels.StackDetailInfoPanelHeight(m.detailStackData(), m.width)
 	default:
-		infoPanelHeight = panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width)
+		infoPanelHeight = panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width, m.detailUpdateInfo())
 	}
 	logPanel := m.height - infoPanelHeight - 1
 	if logPanel < 5 {
@@ -1750,7 +1789,7 @@ func (m Model) renderDetail() string {
 			m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing, m.logOrder, logSearch)
+			m.logFollowing, m.logOrder, logSearch, m.detailUpdateInfo())
 	}
 	return lipgloss.NewStyle().
 		Background(styles.BgBase).
@@ -1776,6 +1815,9 @@ func (m Model) renderDashboard() string {
 			Collapsed:      item.Collapsed,
 			Container:      item.Container,
 		}
+		if item.Container != nil {
+			panelItems[i].UpdateAvailable = m.hasImageUpdate(item.Container.Image)
+		}
 	}
 	containersFreshness := dashboardFreshnessLabel(
 		m.dockerData.CollectedAt,
@@ -1796,7 +1838,8 @@ func (m Model) renderDashboard() string {
 		m.TestMode,
 		sortIndicatorLabel(m.dashboardSort),
 		m.visibleContainers,
-		containersFreshness)
+		containersFreshness,
+		m.updateSummaryLabel())
 
 	// Quick-action menu overlay
 	if m.quickMenuOpen {
@@ -2140,4 +2183,77 @@ func renderedLineCount(s string) int {
 		return 0
 	}
 	return strings.Count(s, "\n") + 1
+}
+
+// hasImageUpdate reports whether a newer digest was found for an image
+// reference during the last check.
+func (m Model) hasImageUpdate(imageRef string) bool {
+	s, ok := m.imageUpdates[strings.TrimSpace(imageRef)]
+	return ok && s.State == registry.StateAvailable
+}
+
+// updateSummaryLabel is the container-panel header note about image updates.
+// Empty until a check has run, so the panel is unchanged for anyone who never
+// presses 'u'.
+func (m Model) updateSummaryLabel() string {
+	if m.updateChecking {
+		return "checking updates"
+	}
+	if len(m.imageUpdates) == 0 {
+		return ""
+	}
+
+	available, failed := 0, 0
+	for _, s := range m.imageUpdates {
+		switch s.State {
+		case registry.StateAvailable:
+			available++
+		case registry.StateError:
+			failed++
+		}
+	}
+
+	switch {
+	case available > 0 && failed > 0:
+		return fmt.Sprintf("%d updates, %d unchecked", available, failed)
+	case available > 0:
+		return fmt.Sprintf("%d updates", available)
+	case failed > 0:
+		// Never imply everything is current when some images failed.
+		return fmt.Sprintf("%d unchecked", failed)
+	default:
+		return "up to date"
+	}
+}
+
+// imageUpdateStatus returns the last check result for an image reference.
+func (m Model) imageUpdateStatus(imageRef string) (registry.Status, bool) {
+	s, ok := m.imageUpdates[strings.TrimSpace(imageRef)]
+	return s, ok
+}
+
+// detailUpdateInfo builds the detail panel's update rows for the container
+// currently open, or nil when no check has covered its image yet.
+func (m Model) detailUpdateInfo() *panels.UpdateInfo {
+	if m.detailContainer == nil {
+		return nil
+	}
+	status, ok := m.imageUpdateStatus(m.detailContainer.Image)
+	if !ok {
+		return nil
+	}
+
+	info := panels.UpdateInfo{
+		State:        status.State.String(),
+		LocalDigest:  status.LocalDigest,
+		RemoteDigest: status.RemoteDigest,
+		Reason:       status.Reason,
+		CheckedAt:    status.CheckedAt,
+	}
+	// The command comes from the container's own compose labels, so it is
+	// only available once the detail metadata has loaded.
+	if status.State == registry.StateAvailable && m.detailMeta != nil {
+		info.Command = panels.UpdateCommand(m.detailMeta.Labels)
+	}
+	return &info
 }

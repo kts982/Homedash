@@ -69,7 +69,10 @@ Persistent recent events and problem history stay visible without leaving the ma
 - **Weather** - current conditions via [wttr.in](https://wttr.in), shown in the header bar with responsive degradation
 - **Responsive layout** - works across narrow and wide terminals
 - **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
-- **Themes, options, and mouse support** - Tokyo Night, Catppuccin, Dracula, an in-app options dialog for theme, disk, refresh, and Docker settings, plus click and scroll navigation
+- **Image update checks** - `u` asks each image's registry whether the tag you are running now points at a different manifest digest, marking stale containers with `⬆`. Works across Docker Hub, ghcr.io, and private registries using your existing `~/.docker` credentials. Locally-built images are reported as untracked rather than as errors. Manual by design — never on the refresh tick, so registries are not polled every few seconds
+- **Compose-aware update commands** - for a container with a pending update, the detail view builds the exact `docker compose ... up -d --pull always <service>` command from the container's own labels, with `c` to copy it. HomeDash shows the command rather than running it, so there is no dependency on the docker CLI
+- **Log order** - logs render newest-first by default, with `o` to switch to chronological
+- **Themes, options, and mouse support** - Tokyo Night, Catppuccin, Dracula, Nord, Ember, and Monochrome, each with light and dark variants selected automatically from the terminal background, an in-app options dialog for theme, disk, refresh, and Docker settings, plus click and scroll navigation
 
 ## Status
 
@@ -192,6 +195,7 @@ HomeDash saves UI state (collapsed stack groups) to `~/.config/homedash/state.js
 | `enter` | Expand/collapse selected stack, or open selected container detail |
 | `l` | Open logs for the selected container or stack |
 | `o` | Cycle dashboard sort mode (`default`, `cpu`, `mem`, `unhealthy`) |
+| `u` | Check registries for image updates (manual — never runs on the refresh tick) |
 | `space` | Open quick-action menu for selected container or stack |
 | `/` | Search / filter containers |
 | `s` | Stop selected container or stack (with confirmation) |
@@ -212,6 +216,7 @@ Container filtering supports plain text plus field tokens like `state:running`, 
 | `g` / `G` | Jump to top / bottom of logs |
 | `f` | Toggle log follow mode (live streaming) |
 | `o` | Toggle log order (newest-first / oldest-first) |
+| `c` | Copy the compose command that applies a pending image update |
 | `/` | Search logs (substring highlight) |
 | `n` / `N` | Jump to next / previous search match |
 | `l` | Refresh logs |

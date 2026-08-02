@@ -1,13 +1,20 @@
 package ui
 
 import (
+	"context"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 	"github.com/kts982/homedash/internal/state"
 )
+
+// updateCheckTimeout bounds a whole update sweep. Generous, because it covers
+// every image across every registry, but finite so a hung registry cannot
+// leave the check spinning forever.
+const updateCheckTimeout = 90 * time.Second
 
 type stackActionTarget struct {
 	ID   string
@@ -176,4 +183,30 @@ func dismissNotificationCmd(id uint64) tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return DismissNotificationMsg{ID: id}
 	})
+}
+
+// checkUpdatesCmd queries each running container's registry for a newer
+// manifest digest.
+//
+// Deliberately manual rather than tied to the refresh tick: the Docker
+// refresh interval defaults to 5s, and hitting five registries at that rate
+// is both rude and liable to trip anonymous rate limits. The containers
+// slice is cloned because this runs on its own goroutine.
+func checkUpdatesCmd(containers []collector.Container) tea.Cmd {
+	snapshot := append([]collector.Container(nil), containers...)
+
+	return func() tea.Msg {
+		targets, err := collector.UpdateTargets(snapshot)
+		if err != nil {
+			return UpdateCheckMsg{Err: err}
+		}
+		if len(targets) == 0 {
+			return UpdateCheckMsg{}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
+		defer cancel()
+
+		return UpdateCheckMsg{Statuses: registry.NewHTTPChecker().Check(ctx, targets)}
+	}
 }

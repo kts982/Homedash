@@ -355,6 +355,16 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 			m.alertsOpen = !m.alertsOpen
 			m.recalcLayout()
 		}
+	case "u":
+		// Manual only. A registry sweep on the refresh tick would hammer
+		// every registry every few seconds; see checkUpdatesCmd.
+		if m.viewMode == ViewDashboard && !m.updateChecking && !m.TestMode {
+			m.updateChecking = true
+			return m, tea.Batch(
+				m.pushNotify("Checking registries for image updates...", levelInfo),
+				checkUpdatesCmd(m.dockerData.Containers),
+			)
+		}
 	case "O":
 		if m.viewMode == ViewDashboard {
 			return m, m.openSettings()
@@ -607,6 +617,17 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 			// Park where new lines land so autoscroll engages immediately.
 			m.detailScrollOffset = m.followPinOffset()
 			return m, m.startFollowing()
+		}
+	case "c":
+		// Copy the compose command that applies a pending image update.
+		// OSC 52 is best-effort — terminals may not support it or may have
+		// it disabled over SSH — so the command is always rendered as
+		// selectable text too, and copy is a convenience, not the only path.
+		if info := m.detailUpdateInfo(); info != nil && info.Command != "" {
+			return m, tea.Batch(
+				tea.SetClipboard(info.Command),
+				m.pushNotify("Update command copied to clipboard", levelInfo),
+			)
 		}
 	case "o":
 		// Flip render order, mirroring the scroll offset so the lines the
