@@ -90,8 +90,8 @@ func TestRenderContainersShowsSortAndShownCounts(t *testing.T) {
 }
 
 func TestRenderContainerSortSummaryUsesSeparateStyles(t *testing.T) {
-	if err := styles.ApplyNamed("tokyo-night"); err != nil {
-		t.Fatalf("ApplyNamed() error = %v", err)
+	if _, known := styles.ApplyTheme("tokyo-night", true); !known {
+		t.Fatal("ApplyTheme(\"tokyo-night\") reported the theme as unknown")
 	}
 
 	rendered := renderContainerSortSummary("cpu")

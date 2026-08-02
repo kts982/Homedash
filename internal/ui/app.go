@@ -188,6 +188,10 @@ type Model struct {
 	// Non-fatal config problems, surfaced once the UI is up
 	configWarnings []string
 
+	// Terminal background, from tea.BackgroundColorMsg. Assumed dark until
+	// the terminal reports otherwise; selects the theme's light/dark variant.
+	darkBackground bool
+
 	// Log follow mode
 	logFollowing    bool
 	logFollowCancel context.CancelFunc
@@ -263,6 +267,7 @@ func NewModel(options ModelOptions) Model {
 		searchInput:            ti,
 		logSearchInput:         lsi,
 		themeName:              normalizeThemeName(options.Theme),
+		darkBackground:         true,
 		disks:                  disks,
 		dockerHost:             dockerHost,
 		systemRefreshInterval:  systemRefresh,
@@ -297,6 +302,9 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	cmds := []tea.Cmd{
+		// Ask the terminal for its background so the theme can pick its
+		// light or dark variant. Answered via tea.BackgroundColorMsg.
+		tea.RequestBackgroundColor,
 		// Surface any non-fatal config problems found during load
 		func() tea.Msg { return configWarningsMsg{warnings: m.configWarnings} },
 		// Initial data collection
@@ -354,8 +362,7 @@ func (m *Model) errorIfSettingsHidden() {
 }
 
 func (m *Model) applyRuntimeConfig(cfg config.Config) tea.Cmd {
-	m.themeName = normalizeThemeName(cfg.Theme)
-	_ = styles.ApplyNamed(m.themeName)
+	m.themeName, _ = styles.ApplyTheme(cfg.Theme, m.darkBackground)
 	applyThemedTextInputStyles(&m.searchInput)
 	applyThemedTextInputStyles(&m.logSearchInput)
 	m.disks = append([]config.Disk(nil), cfg.System.Disks...)
@@ -849,6 +856,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScrollOffset = m.followPinOffset()
 		}
 		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
+	case tea.BackgroundColorMsg:
+		// The terminal reported its background. Re-resolve the active theme
+		// so a light terminal gets the light variant, and refresh the styles
+		// cached inside the text inputs, which Apply cannot reach.
+		if isDark := msg.IsDark(); isDark != m.darkBackground {
+			m.darkBackground = isDark
+			styles.ReapplyForBackground(isDark)
+			applyThemedTextInputStyles(&m.searchInput)
+			applyThemedTextInputStyles(&m.logSearchInput)
+		}
+		return m, nil
 	case configWarningsMsg:
 		var cmds []tea.Cmd
 		for _, w := range msg.warnings {

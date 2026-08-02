@@ -23,7 +23,9 @@ const (
 	settingsDiskFieldStart
 )
 
-var settingsThemeOptions = []string{"tokyo-night", "catppuccin", "dracula"}
+// settingsThemeOptions comes from the styles registry, so adding a theme
+// there adds it to the picker automatically, in the registry's cycle order.
+var settingsThemeOptions = styles.ThemeIDs()
 
 type settingsDiskRow struct {
 	label textinput.Model
@@ -43,12 +45,11 @@ type settingsForm struct {
 	disks          []settingsDiskRow
 }
 
+// normalizeThemeName resolves a configured name to a known theme ID. Unknown
+// names resolve to the default rather than being preserved, so the settings
+// picker never has to render an option that does not exist.
 func normalizeThemeName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "tokyo-night"
-	}
-	return name
+	return styles.LookupTheme(name).ID
 }
 
 func newThemedTextInput(value, placeholder, prompt string, virtualCursor bool) textinput.Model {
@@ -392,15 +393,11 @@ func (f *settingsForm) themeView(width int) string {
 	return f.fieldView("Theme", strings.Join(parts, " "), f.focus == settingsThemeField, width)
 }
 
+// themePreviewColor is the swatch shown next to each option in the picker.
+// It always uses the dark variant so the swatches stay visually comparable
+// with each other rather than shifting with the terminal background.
 func themePreviewColor(name string) color.Color {
-	switch name {
-	case "catppuccin":
-		return styles.CatppuccinMocha.Secondary
-	case "dracula":
-		return styles.Dracula.Secondary
-	default:
-		return styles.TokyoNight.Secondary
-	}
+	return styles.LookupTheme(name).Dark.Secondary
 }
 
 func (f *settingsForm) diskRowsView(contentWidth int) string {
