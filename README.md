@@ -146,6 +146,7 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 | `refresh.docker` | duration | `5s` | Docker stats refresh interval (min: `3s`) |
 | `refresh.weather` | duration | `5m` | Weather refresh interval (min: `1m`) |
 | `docker.host` | string | `unix:///var/run/docker.sock` | Docker daemon socket |
+| `logs.order` | string | `newest` | Log line order: `newest` (most recent on top) or `oldest` (chronological). Toggle per-session with `o` in the detail view. An unrecognised value warns and falls back to `newest` rather than failing startup. |
 
 The Docker host can also be set via the `DOCKER_HOST` environment variable, which takes precedence over the config file.
 
@@ -210,6 +211,7 @@ Container filtering supports plain text plus field tokens like `state:running`, 
 | `ctrl+u` / `ctrl+d` or `PgUp` / `PgDn` | Scroll by half page |
 | `g` / `G` | Jump to top / bottom of logs |
 | `f` | Toggle log follow mode (live streaming) |
+| `o` | Toggle log order (newest-first / oldest-first) |
 | `/` | Search logs (substring highlight) |
 | `n` / `N` | Jump to next / previous search match |
 | `l` | Refresh logs |

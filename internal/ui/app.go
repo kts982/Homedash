@@ -182,6 +182,12 @@ type Model struct {
 	logSearchMatches []int // indices into detailLogs that match
 	logSearchIndex   int   // current position in logSearchMatches
 
+	// Log render order (display only — detailLogs stays in arrival order)
+	logOrder panels.LogOrder
+
+	// Non-fatal config problems, surfaced once the UI is up
+	configWarnings []string
+
 	// Log follow mode
 	logFollowing    bool
 	logFollowCancel context.CancelFunc
@@ -215,6 +221,8 @@ type ModelOptions struct {
 	SystemRefreshInterval  time.Duration
 	DockerRefreshInterval  time.Duration
 	WeatherRefreshInterval time.Duration
+	LogOrder               string
+	ConfigWarnings         []string
 	TestMode               bool
 }
 
@@ -260,11 +268,23 @@ func NewModel(options ModelOptions) Model {
 		systemRefreshInterval:  systemRefresh,
 		dockerRefreshInterval:  dockerRefresh,
 		weatherRefreshInterval: weatherRefresh,
+		logOrder:               logOrderFromConfig(options.LogOrder),
+		configWarnings:         options.ConfigWarnings,
 		diskWarned:             make(map[string]bool),
 		shownWarnings:          make(map[string]bool),
 		TestMode:               options.TestMode,
 		focused:                true,
 	}
+}
+
+// logOrderFromConfig maps the config string onto the render enum. Unknown
+// values fall back to newest-first; config.Load already warns about those, so
+// this is only a safety net for direct ModelOptions construction (e.g. tests).
+func logOrderFromConfig(value string) panels.LogOrder {
+	if strings.EqualFold(strings.TrimSpace(value), config.LogOrderOldest) {
+		return panels.LogOrderOldest
+	}
+	return panels.LogOrderNewest
 }
 
 func (m Model) Init() tea.Cmd {
@@ -277,6 +297,8 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	cmds := []tea.Cmd{
+		// Surface any non-fatal config problems found during load
+		func() tea.Msg { return configWarningsMsg{warnings: m.configWarnings} },
 		// Initial data collection
 		func() tea.Msg { return collectSystemCmd(m.disks) },
 		func() tea.Msg { return collectDockerCmd() },
@@ -807,7 +829,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		wasAtBottom := m.isFollowAtBottom()
+		wasPinned := m.isFollowPinned()
 		m.detailLogs = append(m.detailLogs, msg.Line)
 		// Cap at 1000 lines
 		if len(m.detailLogs) > 1000 {
@@ -822,15 +844,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logSearchMatches = append(m.logSearchMatches, len(m.detailLogs)-1)
 			}
 		}
-		// Auto-scroll to bottom if user was at bottom
-		if wasAtBottom {
-			maxScroll := len(m.detailLogs) - m.detailLogRows
-			if maxScroll < 0 {
-				maxScroll = 0
-			}
-			m.detailScrollOffset = maxScroll
+		// Keep the newest line in view if the user had not scrolled away.
+		if wasPinned {
+			m.detailScrollOffset = m.followPinOffset()
 		}
 		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
+	case configWarningsMsg:
+		var cmds []tea.Cmd
+		for _, w := range msg.warnings {
+			if cmd := m.pushNotify(w, levelWarning); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
+		}
+		return m, nil
 	case followRestartMsg:
 		// Auto-restart follow if still in stack detail view and not already following
 		if m.viewMode == ViewDetail && m.detailStackName != "" && !m.logFollowing {
@@ -893,12 +922,27 @@ func (m *Model) startFollowing() tea.Cmd {
 }
 
 // isFollowAtBottom returns true if scroll is at or near the bottom of logs.
-func (m *Model) isFollowAtBottom() bool {
+// followPinOffset is the scroll offset at which new lines stay in view.
+// Under newest-first that is the top of the panel; under oldest-first it is
+// the bottom, which is the pre-existing behaviour.
+func (m *Model) followPinOffset() int {
+	if m.logOrder == panels.LogOrderNewest {
+		return 0
+	}
 	maxScroll := len(m.detailLogs) - m.detailLogRows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	return m.detailScrollOffset >= maxScroll
+	return maxScroll
+}
+
+// isFollowPinned reports whether the view is parked where incoming lines
+// appear, meaning autoscroll should keep it there.
+func (m *Model) isFollowPinned() bool {
+	if m.logOrder == panels.LogOrderNewest {
+		return m.detailScrollOffset <= 0
+	}
+	return m.detailScrollOffset >= m.followPinOffset()
 }
 
 type quickMenuItem struct {
@@ -1682,13 +1726,13 @@ func (m Model) renderDetail() string {
 			m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing, logSearch)
+			m.logFollowing, m.logOrder, logSearch)
 	} else {
 		detail = panels.RenderDetail(
 			m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing, logSearch)
+			m.logFollowing, m.logOrder, logSearch)
 	}
 	return lipgloss.NewStyle().
 		Background(styles.BgBase).
@@ -1951,8 +1995,12 @@ func (m *Model) recomputeLogSearchMatches() {
 	}
 }
 
+// scrollToLogLine centres the view on a log line. lineIdx is a storage index
+// into detailLogs, so it is mapped through the active order to find the row
+// that line actually occupies on screen.
 func (m *Model) scrollToLogLine(lineIdx int) {
-	target := lineIdx - m.detailLogRows/2
+	renderIdx := m.logOrder.RenderIndex(lineIdx, len(m.detailLogs))
+	target := renderIdx - m.detailLogRows/2
 	if target < 0 {
 		target = 0
 	}

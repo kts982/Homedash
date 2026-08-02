@@ -38,6 +38,8 @@ func main() {
 			SystemRefreshInterval:  cfg.Refresh.System,
 			DockerRefreshInterval:  cfg.Refresh.Docker,
 			WeatherRefreshInterval: cfg.Refresh.Weather,
+			LogOrder:               cfg.Logs.Order,
+			ConfigWarnings:         cfg.Warnings,
 			TestMode:               *testMode,
 		}),
 	)

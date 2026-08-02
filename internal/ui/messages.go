@@ -79,6 +79,12 @@ type LogFollowLineMsg struct {
 // a stream ends unexpectedly (e.g. container restart).
 type followRestartMsg struct{}
 
+// configWarningsMsg carries non-fatal problems found while loading config, so
+// they surface as notifications rather than blocking startup.
+type configWarningsMsg struct {
+	warnings []string
+}
+
 // CollapseSaveTickMsg fires after debounce delay to trigger save.
 type CollapseSaveTickMsg struct{ Seq uint64 }
 

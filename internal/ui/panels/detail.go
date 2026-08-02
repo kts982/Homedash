@@ -454,6 +454,7 @@ func RenderDetail(
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
 	logFollowing bool,
+	logOrder LogOrder,
 	logSearch LogSearch,
 ) string {
 	if c == nil {
@@ -497,7 +498,7 @@ func RenderDetail(
 		logContentHeight = 1
 	}
 
-	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth)
+	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth, logOrder)
 
 	// Clamp scroll offset
 	maxScroll := len(logLines) - logContentHeight
@@ -511,7 +512,7 @@ func RenderDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logSearch)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logOrder, logSearch)
 
 	// Slice visible log lines
 	endIdx := scrollOffset + logContentHeight
@@ -519,7 +520,7 @@ func RenderDetail(
 		endIdx = len(logLines)
 	}
 	visible := logLines[scrollOffset:endIdx]
-	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth)
+	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth, logOrder, len(logLines))
 	for len(visible) < logContentHeight {
 		visible = append(visible, "")
 	}
@@ -675,6 +676,45 @@ func stackLogSourceColor(name string) color.Color {
 	return palette[sum%len(palette)]
 }
 
+// LogOrder controls the direction log lines are rendered in. Only rendering
+// is affected — Model.detailLogs stays in arrival order, so search indices,
+// the line cap, and the follow stream are all unaffected by this setting.
+type LogOrder int
+
+const (
+	// LogOrderNewest puts the most recent line at the top of the panel.
+	LogOrderNewest LogOrder = iota
+	// LogOrderOldest puts the oldest line at the top, chronologically.
+	LogOrderOldest
+)
+
+// String renders the order plus its toggle key for the panel title. The hint
+// lives here rather than in the action bar because the bar is already at its
+// width budget — adding an entry there wraps it onto a second line.
+func (o LogOrder) String() string {
+	if o == LogOrderOldest {
+		return "▼ oldest [o]"
+	}
+	return "▲ newest [o]"
+}
+
+// RenderIndex maps a storage index within n lines to the row it occupies on
+// screen under this order. Self-inverse: applying it twice returns the
+// original index.
+func (o LogOrder) RenderIndex(storageIndex, n int) int {
+	if o == LogOrderOldest {
+		return storageIndex
+	}
+	return n - 1 - storageIndex
+}
+
+// reverseLines flips a slice of rendered lines in place.
+func reverseLines(lines []string) {
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+}
+
 type detailLogState int
 
 const (
@@ -685,7 +725,7 @@ const (
 	detailLogStateError
 )
 
-func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int) ([]string, detailLogState) {
+func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int, order LogOrder) ([]string, detailLogState) {
 	switch {
 	case logs == nil && logsErr == nil && logFollowing:
 		return []string{
@@ -718,11 +758,14 @@ func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth 
 		for _, line := range logs {
 			rendered = append(rendered, formatLogLine(line, innerWidth))
 		}
+		if order == LogOrderNewest {
+			reverseLines(rendered)
+		}
 		return rendered, detailLogStateLoaded
 	}
 }
 
-func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logFollowing bool, logSearch ...LogSearch) string {
+func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logFollowing bool, order LogOrder, logSearch ...LogSearch) string {
 	titleStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
@@ -754,6 +797,7 @@ func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCo
 		if logFollowing {
 			statusParts = append(statusParts, "following")
 		}
+		statusParts = append(statusParts, order.String())
 		statusParts = append(statusParts, fmt.Sprintf("%d lines", lineCount))
 	case detailLogStateLoading:
 		statusParts = append(statusParts, "fetching tail")
@@ -801,14 +845,18 @@ type LogSearch struct {
 	Current     int // 1-based index into matches
 }
 
-func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearch, width int) {
+// highlightSearchLines paints match backgrounds onto the visible rows.
+// logSearch.MatchSet is keyed by storage index, so under LogOrderNewest the
+// on-screen row must be mapped back through order.RenderIndex (which is
+// self-inverse) before the lookup. total is the full rendered line count.
+func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearch, width int, order LogOrder, total int) {
 	if logSearch.Query == "" || len(logSearch.MatchSet) == 0 {
 		return
 	}
 	matchBg := lipgloss.Color("#3a3000")
 	currentBg := lipgloss.Color("#5a4a00")
 	for i := range visible {
-		origIdx := scrollOffset + i
+		origIdx := order.RenderIndex(scrollOffset+i, total)
 		if !logSearch.MatchSet[origIdx] {
 			continue
 		}

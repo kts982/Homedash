@@ -300,3 +300,98 @@ func TestSaveRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeLogOrder(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       string
+		want        string
+		wantWarning bool
+	}{
+		{"newest", "newest", LogOrderNewest, false},
+		{"oldest", "oldest", LogOrderOldest, false},
+		{"empty defaults to newest", "", LogOrderNewest, false},
+		{"whitespace defaults to newest", "   ", LogOrderNewest, false},
+		{"mixed case accepted", "Oldest", LogOrderOldest, false},
+		{"padded value accepted", "  newest  ", LogOrderNewest, false},
+		{"typo falls back and warns", "newst", LogOrderNewest, true},
+		{"unrelated value falls back and warns", "reverse", LogOrderNewest, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, warning := normalizeLogOrder(tt.value)
+			if got != tt.want {
+				t.Errorf("normalizeLogOrder(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+			if (warning != "") != tt.wantWarning {
+				t.Errorf("normalizeLogOrder(%q) warning = %q, wantWarning %v", tt.value, warning, tt.wantWarning)
+			}
+			if tt.wantWarning && !strings.Contains(warning, tt.value) {
+				t.Errorf("warning %q should quote the offending value %q", warning, tt.value)
+			}
+		})
+	}
+}
+
+// A bad logs.order must not fail the load — it is a display preference, and
+// erroring would let a typo prevent startup entirely.
+func TestLoadLogOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "homedash")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name         string
+		yaml         string
+		wantOrder    string
+		wantWarnings int
+	}{
+		{"explicit oldest", "logs:\n  order: oldest\n", LogOrderOldest, 0},
+		{"explicit newest", "logs:\n  order: newest\n", LogOrderNewest, 0},
+		{"absent defaults to newest", "theme: dracula\n", LogOrderNewest, 0},
+		{"invalid falls back and warns", "logs:\n  order: sideways\n", LogOrderNewest, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(configDir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v, want nil (bad log order must never fail the load)", err)
+			}
+			if cfg.Logs.Order != tt.wantOrder {
+				t.Errorf("Logs.Order = %q, want %q", cfg.Logs.Order, tt.wantOrder)
+			}
+			if len(cfg.Warnings) != tt.wantWarnings {
+				t.Errorf("Warnings = %v, want %d warning(s)", cfg.Warnings, tt.wantWarnings)
+			}
+		})
+	}
+}
+
+func TestSaveRoundTripsLogOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	cfg := Default()
+	cfg.Logs.Order = LogOrderOldest
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Logs.Order != LogOrderOldest {
+		t.Errorf("Logs.Order after round trip = %q, want %q", loaded.Logs.Order, LogOrderOldest)
+	}
+}
