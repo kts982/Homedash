@@ -138,7 +138,7 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `theme` | string | `tokyo-night` | Color theme: `tokyo-night`, `catppuccin`, `dracula` |
+| `theme` | string | `tokyo-night` | Color theme: `tokyo-night`, `catppuccin`, `dracula`, `nord`, `ember`, `mono`. Each has matching light and dark variants, selected automatically from the terminal background. An unrecognised name warns and falls back to `tokyo-night` rather than failing startup. |
 | `system.disks` | list | auto-detected local mounts, with `/` fallback | Disk mount points to monitor |
 | `system.disks[].path` | string | required | Absolute path to mount point |
 | `system.disks[].label` | string | same as path | Display label |
