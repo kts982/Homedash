@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
 	"github.com/kts982/homedash/internal/state"
+	"github.com/kts982/homedash/internal/ui/panels"
 )
 
 type Panel int
@@ -603,9 +604,22 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.logFollowing {
 			m.stopFollowing()
 		} else {
-			// Jump to bottom so autoscroll engages on new lines
-			m.detailScrollOffset = detailMaxScroll(m)
+			// Park where new lines land so autoscroll engages immediately.
+			m.detailScrollOffset = m.followPinOffset()
 			return m, m.startFollowing()
+		}
+	case "o":
+		// Flip render order, mirroring the scroll offset so the lines the
+		// user was reading stay on screen instead of jumping to an end.
+		if mirrored := detailMaxScroll(m) - m.detailScrollOffset; mirrored > 0 {
+			m.detailScrollOffset = mirrored
+		} else {
+			m.detailScrollOffset = 0
+		}
+		if m.logOrder == panels.LogOrderNewest {
+			m.logOrder = panels.LogOrderOldest
+		} else {
+			m.logOrder = panels.LogOrderNewest
 		}
 	case "j", "down":
 		maxScroll := detailMaxScroll(m)

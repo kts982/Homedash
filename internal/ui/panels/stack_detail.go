@@ -51,6 +51,7 @@ func RenderStackDetail(
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
 	logFollowing bool,
+	logOrder LogOrder,
 	logSearch LogSearch,
 ) string {
 	if stack == nil {
@@ -85,7 +86,7 @@ func RenderStackDetail(
 		logContentHeight = 1
 	}
 
-	logLines, logState := stackDetailLogLines(logs, logsErr, logFollowing, innerWidth)
+	logLines, logState := stackDetailLogLines(logs, logsErr, logFollowing, innerWidth, logOrder)
 	maxScroll := len(logLines) - logContentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -97,14 +98,14 @@ func RenderStackDetail(
 		scrollOffset = 0
 	}
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logSearch)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logOrder, logSearch)
 
 	endIdx := scrollOffset + logContentHeight
 	if endIdx > len(logLines) {
 		endIdx = len(logLines)
 	}
 	visible := logLines[scrollOffset:endIdx]
-	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth)
+	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth, logOrder, len(logLines))
 	for len(visible) < logContentHeight {
 		visible = append(visible, "")
 	}
@@ -263,7 +264,7 @@ func stackDetailPortsLine(containers []StackDetailContainer, innerWidth int) str
 	return summarizeDetailItems(parts, ", ", detailValueWidth(innerWidth))
 }
 
-func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int) ([]string, detailLogState) {
+func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int, order LogOrder) ([]string, detailLogState) {
 	switch {
 	case logs == nil && logsErr == nil && logFollowing:
 		return []string{
@@ -295,6 +296,9 @@ func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerW
 		rendered := make([]string, 0, len(logs))
 		for _, line := range logs {
 			rendered = append(rendered, formatLogLine(line, innerWidth))
+		}
+		if order == LogOrderNewest {
+			reverseLines(rendered)
 		}
 		return rendered, detailLogStateLoaded
 	}
