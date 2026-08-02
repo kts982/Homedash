@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/ui/components"
 	"github.com/kts982/homedash/internal/ui/panels"
 )
@@ -1693,5 +1694,171 @@ func TestScrollToLogLineMapsThroughOrder(t *testing.T) {
 	}
 	if want := 100 - 1 - 5 - 10/2; newestOffset != want {
 		t.Errorf("newest-first: offset = %d, want %d (line 5 renders near the bottom)", newestOffset, want)
+	}
+}
+
+func statusFor(ref string, st registry.State) registry.Status {
+	return registry.Status{Ref: ref, State: st, CheckedAt: time.Now()}
+}
+
+func TestHasImageUpdate(t *testing.T) {
+	m := newTestModel()
+	m.imageUpdates = map[string]registry.Status{
+		"nginx:alpine":        statusFor("nginx:alpine", registry.StateAvailable),
+		"caddy:2":             statusFor("caddy:2", registry.StateCurrent),
+		"caddy-hetzner:local": statusFor("caddy-hetzner:local", registry.StateUnwatchable),
+		"ghcr.io/x/y:latest":  statusFor("ghcr.io/x/y:latest", registry.StateError),
+	}
+
+	tests := []struct {
+		ref  string
+		want bool
+	}{
+		{"nginx:alpine", true},
+		{"caddy:2", false},
+		{"caddy-hetzner:local", false}, // unwatchable is not an update
+		{"ghcr.io/x/y:latest", false},  // errors must not be shown as updates
+		{"never-checked:1", false},
+		{"  nginx:alpine  ", true}, // padding tolerated
+	}
+	for _, tt := range tests {
+		if got := m.hasImageUpdate(tt.ref); got != tt.want {
+			t.Errorf("hasImageUpdate(%q) = %v, want %v", tt.ref, got, tt.want)
+		}
+	}
+}
+
+// The summary must never imply everything is current when some images could
+// not be reached.
+func TestUpdateSummaryLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		checking bool
+		statuses map[string]registry.Status
+		want     string
+	}{
+		{"no check has run", false, nil, ""},
+		{"in progress", true, nil, "checking updates"},
+		{
+			"all current", false,
+			map[string]registry.Status{"a": statusFor("a", registry.StateCurrent)},
+			"up to date",
+		},
+		{
+			"unwatchable only still counts as up to date", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateCurrent),
+				"b": statusFor("b", registry.StateUnwatchable),
+			},
+			"up to date",
+		},
+		{
+			"updates available", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateAvailable),
+				"b": statusFor("b", registry.StateAvailable),
+				"c": statusFor("c", registry.StateCurrent),
+			},
+			"2 updates",
+		},
+		{
+			"errors reported alongside updates", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateAvailable),
+				"b": statusFor("b", registry.StateError),
+			},
+			"1 updates, 1 unchecked",
+		},
+		{
+			"errors alone must not read as up to date", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateCurrent),
+				"b": statusFor("b", registry.StateError),
+			},
+			"1 unchecked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.updateChecking = tt.checking
+			m.imageUpdates = tt.statuses
+			if got := m.updateSummaryLabel(); got != tt.want {
+				t.Errorf("updateSummaryLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The check is manual by design; the refresh tick must never trigger it.
+func TestUpdateCheckIsNotTriggeredByRefresh(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{{ID: "a", Name: "a", Image: "nginx:alpine"}},
+	}
+
+	updated, _ := m.Update(DockerDataMsg{Data: m.dockerData})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Fatal("a docker refresh started an update check; checks must be manual only")
+	}
+	if len(m.imageUpdates) != 0 {
+		t.Fatal("a docker refresh populated update results")
+	}
+}
+
+func TestUpdateCheckMsgPopulatesResults(t *testing.T) {
+	m := newTestModel()
+	m.updateChecking = true
+
+	updated, _ := m.Update(UpdateCheckMsg{Statuses: []registry.Status{
+		statusFor("nginx:alpine", registry.StateAvailable),
+		statusFor("caddy:2", registry.StateCurrent),
+	}})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Error("updateChecking should be cleared once results arrive")
+	}
+	if !m.hasImageUpdate("nginx:alpine") {
+		t.Error("nginx:alpine should be flagged as having an update")
+	}
+	if m.hasImageUpdate("caddy:2") {
+		t.Error("caddy:2 is current and should not be flagged")
+	}
+	if m.updateCheckedAt.IsZero() {
+		t.Error("updateCheckedAt should be set so staleness can be shown")
+	}
+}
+
+func TestUpdateCheckMsgErrorIsReported(t *testing.T) {
+	m := newTestModel()
+	m.updateChecking = true
+
+	updated, _ := m.Update(UpdateCheckMsg{Err: errors.New("docker socket unavailable")})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Error("updateChecking should be cleared after a failure")
+	}
+	if m.notifications.len() == 0 {
+		t.Error("a failed update check should raise a notification")
 	}
 }

@@ -23,7 +23,7 @@ func capitalize(s string) string {
 const detailLabelWidth = 8
 
 // DetailInfoPanelHeight returns the rendered info panel height for the detail view.
-func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, hostname string, width int) int {
+func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, hostname string, width int, update *UpdateInfo) int {
 	if c == nil {
 		return 7 // 4 baseline rows + border/title chrome
 	}
@@ -31,10 +31,10 @@ func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDeta
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
-	return len(detailInfoLines(c, meta, hostname, innerWidth)) + 3
+	return len(detailInfoLines(c, meta, hostname, innerWidth, update)) + 3
 }
 
-func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, hostname string, innerWidth int) []string {
+func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, hostname string, innerWidth int, update *UpdateInfo) []string {
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
 	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
@@ -63,6 +63,7 @@ func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, ho
 		formatStackHealthLine(labelStyle, valueStyle, stackVal, healthStyled, innerWidth),
 		formatDetailLine(labelStyle, valueStyle, "Ports", collector.FormatPorts(c.Ports), innerWidth),
 	}
+	infoLines = append(infoLines, updateDetailLines(update, innerWidth, time.Now())...)
 
 	if meta != nil {
 		if meta.RestartPolicy != "" && meta.RestartPolicy != "-" {
@@ -456,6 +457,7 @@ func RenderDetail(
 	logFollowing bool,
 	logOrder LogOrder,
 	logSearch LogSearch,
+	update *UpdateInfo,
 ) string {
 	if c == nil {
 		return "No container selected"
@@ -483,7 +485,7 @@ func RenderDetail(
 
 	infoTitle := lipgloss.NewStyle().Inline(true).MaxWidth(titleAvail).Render(infoTitleLeft)
 
-	infoLines := detailInfoLines(c, meta, hostname, innerWidth)
+	infoLines := detailInfoLines(c, meta, hostname, innerWidth, update)
 	infoPanelHeight := len(infoLines) + 3 // border(2) + title(1)
 	infoContent := strings.Join(infoLines, "\n")
 	infoPanel := components.Panel(infoTitle, infoContent, width, infoPanelHeight, false)
@@ -887,4 +889,102 @@ func detectLogLevel(msg string) color.Color {
 	}
 
 	return nil
+}
+
+// UpdateInfo describes an image's update state for the detail panel.
+//
+// Deliberately a plain struct rather than the collector's Status: the panel
+// renders whatever it is handed and stays independent of how the check works.
+type UpdateInfo struct {
+	// State is one of "current", "available", "unwatchable", "error".
+	State        string
+	LocalDigest  string
+	RemoteDigest string
+	// Reason explains the "unwatchable" and "error" states.
+	Reason string
+	// Command applies the update. Empty when the container was not created
+	// by compose, in which case no command is offered rather than a guess.
+	Command   string
+	CheckedAt time.Time
+}
+
+// shortDigest trims a sha256 digest to something readable in a fixed column
+// while staying long enough to compare two by eye.
+func shortDigest(d string) string {
+	d = strings.TrimPrefix(d, "sha256:")
+	if len(d) > 12 {
+		return d[:12]
+	}
+	if d == "" {
+		return "-"
+	}
+	return d
+}
+
+// updateDetailLines renders the update rows for the detail panel. Returns nil
+// when no check has run, so the panel is unchanged until the user asks.
+func updateDetailLines(u *UpdateInfo, innerWidth int, now time.Time) []string {
+	if u == nil {
+		return nil
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
+
+	var valueStyle lipgloss.Style
+	var text string
+	switch u.State {
+	case "available":
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Warning).Bold(true)
+		text = fmt.Sprintf("⬆ update available  %s → %s",
+			shortDigest(u.LocalDigest), shortDigest(u.RemoteDigest))
+	case "current":
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Success)
+		text = "up to date  " + shortDigest(u.LocalDigest)
+	case "unwatchable":
+		// Not a problem: locally-built images and digest pins land here, and
+		// styling it as a warning would cry wolf.
+		valueStyle = lipgloss.NewStyle().Foreground(styles.TextMuted)
+		text = "not tracked"
+		if u.Reason != "" {
+			text += "  " + u.Reason
+		}
+	default:
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Error)
+		text = "check failed"
+		if u.Reason != "" {
+			text += "  " + u.Reason
+		}
+	}
+
+	if age := checkAgeLabel(u.CheckedAt, now); age != "" {
+		text += "  (" + age + ")"
+	}
+
+	lines := []string{formatDetailLine(labelStyle, valueStyle, "Update", text, innerWidth)}
+
+	if u.State == "available" && u.Command != "" {
+		cmdStyle := lipgloss.NewStyle().Foreground(styles.Info)
+		lines = append(lines,
+			formatDetailLine(labelStyle, cmdStyle, "Apply", u.Command+"   [c] copy", innerWidth))
+	}
+	return lines
+}
+
+// checkAgeLabel describes how stale a check result is, so a cached badge is
+// never mistaken for a fresh one.
+func checkAgeLabel(checkedAt, now time.Time) string {
+	if checkedAt.IsZero() {
+		return ""
+	}
+	d := now.Sub(checkedAt)
+	switch {
+	case d < time.Minute:
+		return "just checked"
+	case d < time.Hour:
+		return fmt.Sprintf("checked %dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("checked %dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("checked %dd ago", int(d.Hours()/24))
+	}
 }

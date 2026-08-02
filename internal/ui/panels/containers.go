@@ -21,6 +21,11 @@ type ContainerDisplayItem struct {
 	StoppedCount   int
 	Collapsed      bool
 	Container      *collector.Container
+
+	// UpdateAvailable marks a row whose image has a newer digest in its
+	// registry. Carried on the item rather than as another render parameter,
+	// so the flag travels with the row it describes.
+	UpdateAvailable bool
 }
 
 type stackSummarySegment struct {
@@ -34,7 +39,7 @@ type containerSummaryItem struct {
 	style lipgloss.Style
 }
 
-func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool, testMode bool, sortLabel string, shownCount int, freshnessLabel string) string {
+func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset, selectedIndex, visibleRows, width int, focused bool, searchInput textinput.Model, filtering bool, testMode bool, sortLabel string, shownCount int, freshnessLabel string, updateSummary string) string {
 	innerWidth := width - 4
 
 	// Adaptive columns based on available width
@@ -99,7 +104,13 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 				innerWidth,
 			)
 		} else if item.Container != nil {
-			row = "  " + formatContainerRow(*item.Container, nameW-2, stackW, statusW, healthW, cpuW, memW, innerWidth-2, showStack, showHealth)
+			// The two-space indent doubles as the slot for the update
+			// marker, so flagging a row costs no horizontal space.
+			indent := "  "
+			if item.UpdateAvailable {
+				indent = lipgloss.NewStyle().Foreground(styles.Warning).Bold(true).Render("⬆") + " "
+			}
+			row = indent + formatContainerRow(*item.Container, nameW-2, stackW, statusW, healthW, cpuW, memW, innerWidth-2, showStack, showHealth)
 		}
 		if focused && i == selectedIndex {
 			row = lipgloss.NewStyle().Background(styles.BgFocus).Width(innerWidth).Render(row)
@@ -131,6 +142,12 @@ func RenderContainers(items []ContainerDisplayItem, running, total, scrollOffset
 		summaryItems = append(summaryItems, containerSummaryItem{
 			label: renderContainerSortSummary(sortLabel),
 			style: lipgloss.NewStyle(),
+		})
+	}
+	if updateSummary != "" {
+		summaryItems = append(summaryItems, containerSummaryItem{
+			label: updateSummary,
+			style: lipgloss.NewStyle().Foreground(styles.Warning).Bold(true),
 		})
 	}
 	if testMode {
