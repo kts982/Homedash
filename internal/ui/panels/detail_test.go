@@ -22,7 +22,7 @@ func TestRenderDetailAcceptsShortContainerID(t *testing.T) {
 		}
 	}()
 
-	view := RenderDetail(c, nil, "", []string{"log line"}, nil, "", "", 0, 80, 20, false, LogSearch{})
+	view := RenderDetail(c, nil, "", []string{"log line"}, nil, "", "", 0, 80, 20, false, LogOrderOldest, LogSearch{}, nil)
 	if !strings.Contains(view, "abc") {
 		t.Fatalf("RenderDetail() output does not contain short container ID: %q", view)
 	}
@@ -62,7 +62,7 @@ func TestRenderDetailShowsPolishedMetadata(t *testing.T) {
 		},
 	}
 
-	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 100, 24, false, LogSearch{})
+	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 100, 24, false, LogOrderOldest, LogSearch{}, nil)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -98,7 +98,7 @@ func TestRenderDetailSummarizesPublishedMetadataInNarrowWidth(t *testing.T) {
 		},
 	}
 
-	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 44, 20, false, LogSearch{})
+	view := RenderDetail(c, meta, "homedash", []string{"log line"}, nil, "", "", 0, 44, 20, false, LogOrderOldest, LogSearch{}, nil)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -119,7 +119,7 @@ func TestRenderDetailShowsLiveWaitingState(t *testing.T) {
 		State: "running",
 	}
 
-	view := RenderDetail(c, nil, "", nil, nil, "", "", 0, 90, 20, true, LogSearch{})
+	view := RenderDetail(c, nil, "", nil, nil, "", "", 0, 90, 20, true, LogOrderOldest, LogSearch{}, nil)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -143,7 +143,7 @@ func TestRenderDetailShowsLiveTitleWhenFollowingLoadedLogs(t *testing.T) {
 		State: "running",
 	}
 
-	view := RenderDetail(c, nil, "", []string{"line one", "line two"}, nil, "", "", 0, 90, 20, true, LogSearch{})
+	view := RenderDetail(c, nil, "", []string{"line one", "line two"}, nil, "", "", 0, 90, 20, true, LogOrderOldest, LogSearch{}, nil)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -166,7 +166,7 @@ func TestRenderDetailShowsLogErrorState(t *testing.T) {
 		State: "running",
 	}
 
-	view := RenderDetail(c, nil, "", nil, assertErr("socket closed"), "", "", 0, 90, 20, false, LogSearch{})
+	view := RenderDetail(c, nil, "", nil, assertErr("socket closed"), "", "", 0, 90, 20, false, LogOrderOldest, LogSearch{}, nil)
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -196,7 +196,7 @@ func TestRenderStackDetailShowsSummaryAndLogs(t *testing.T) {
 		},
 	}
 
-	view := RenderStackDetail(stack, []string{"2026-03-06T12:00:00Z [web] ready"}, nil, "", "", 0, 120, 24, false, LogSearch{})
+	view := RenderStackDetail(stack, []string{"2026-03-06T12:00:00Z [web] ready"}, nil, "", "", 0, 120, 24, false, LogOrderOldest, LogSearch{})
 	plain := stripANSI(view)
 
 	for _, want := range []string{
@@ -238,7 +238,7 @@ func TestRenderStackDetailShowsWaitingState(t *testing.T) {
 		StoppedCount:   1,
 	}
 
-	view := RenderStackDetail(stack, nil, nil, "", "", 0, 90, 20, true, LogSearch{})
+	view := RenderStackDetail(stack, nil, nil, "", "", 0, 90, 20, true, LogOrderOldest, LogSearch{})
 	plain := stripANSI(view)
 
 	for _, want := range []string{

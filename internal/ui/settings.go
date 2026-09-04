@@ -23,7 +23,9 @@ const (
 	settingsDiskFieldStart
 )
 
-var settingsThemeOptions = []string{"tokyo-night", "catppuccin", "dracula"}
+// settingsThemeOptions comes from the styles registry, so adding a theme
+// there adds it to the picker automatically, in the registry's cycle order.
+var settingsThemeOptions = styles.ThemeIDs()
 
 type settingsDiskRow struct {
 	label textinput.Model
@@ -31,6 +33,11 @@ type settingsDiskRow struct {
 }
 
 type settingsForm struct {
+	// base is the config the dialog was opened with. Fields the dialog does
+	// not expose (logs.order today) are carried through from it, so saving
+	// never silently resets them.
+	base config.Config
+
 	themeIndex int
 	focus      int
 	saving     bool
@@ -43,12 +50,11 @@ type settingsForm struct {
 	disks          []settingsDiskRow
 }
 
+// normalizeThemeName resolves a configured name to a known theme ID. Unknown
+// names resolve to the default rather than being preserved, so the settings
+// picker never has to render an option that does not exist.
 func normalizeThemeName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "tokyo-night"
-	}
-	return name
+	return styles.LookupTheme(name).ID
 }
 
 func newThemedTextInput(value, placeholder, prompt string, virtualCursor bool) textinput.Model {
@@ -73,6 +79,7 @@ func applyThemedTextInputStyles(input *textinput.Model) {
 
 func newSettingsForm(cfg config.Config, themeName string) settingsForm {
 	form := settingsForm{
+		base:           cfg,
 		dockerHost:     newThemedTextInput(cfg.Docker.Host, "unix:///var/run/docker.sock", "", true),
 		systemRefresh:  newThemedTextInput(formatSettingsDuration(cfg.Refresh.System), "2s", "", true),
 		dockerRefresh:  newThemedTextInput(formatSettingsDuration(cfg.Refresh.Docker), "5s", "", true),
@@ -258,16 +265,15 @@ func (f *settingsForm) selectedTheme() string {
 }
 
 func (f *settingsForm) config() (config.Config, error) {
-	cfg := config.Config{
-		Theme: f.selectedTheme(),
-		Refresh: config.RefreshConfig{
-			System:  parseSettingsDuration("System refresh", f.systemRefresh.Value(), 1*time.Second),
-			Docker:  parseSettingsDuration("Docker refresh", f.dockerRefresh.Value(), 3*time.Second),
-			Weather: parseSettingsDuration("Weather refresh", f.weatherRefresh.Value(), 1*time.Minute),
-		},
-		Docker: config.DockerConfig{
-			Host: strings.TrimSpace(f.dockerHost.Value()),
-		},
+	cfg := f.base
+	cfg.Theme = f.selectedTheme()
+	cfg.Refresh = config.RefreshConfig{
+		System:  parseSettingsDuration("System refresh", f.systemRefresh.Value(), 1*time.Second),
+		Docker:  parseSettingsDuration("Docker refresh", f.dockerRefresh.Value(), 3*time.Second),
+		Weather: parseSettingsDuration("Weather refresh", f.weatherRefresh.Value(), 1*time.Minute),
+	}
+	cfg.Docker = config.DockerConfig{
+		Host: strings.TrimSpace(f.dockerHost.Value()),
 	}
 
 	disks := make([]config.Disk, 0, len(f.disks))
@@ -392,15 +398,11 @@ func (f *settingsForm) themeView(width int) string {
 	return f.fieldView("Theme", strings.Join(parts, " "), f.focus == settingsThemeField, width)
 }
 
+// themePreviewColor is the swatch shown next to each option in the picker.
+// It always uses the dark variant so the swatches stay visually comparable
+// with each other rather than shifting with the terminal background.
 func themePreviewColor(name string) color.Color {
-	switch name {
-	case "catppuccin":
-		return styles.CatppuccinMocha.Secondary
-	case "dracula":
-		return styles.Dracula.Secondary
-	default:
-		return styles.TokyoNight.Secondary
-	}
+	return styles.LookupTheme(name).Dark.Secondary
 }
 
 func (f *settingsForm) diskRowsView(contentWidth int) string {

@@ -26,6 +26,7 @@ var DefaultBindings = []KeyBinding{
 	{"enter", "open/toggle", "open"},
 	{"l", "logs", "logs"},
 	{"o", "sort", "sort"},
+	{"u", "updates", "upd"},
 	{"space", "actions", "menu"},
 	{"s/S/R", "stop/start/restart", "life"},
 	{"r", "refresh", "sync"},

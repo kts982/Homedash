@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/ui/components"
 	"github.com/kts982/homedash/internal/ui/panels"
 )
@@ -153,6 +154,39 @@ func TestRebuildDisplayItemsFilterMatchesHealthToken(t *testing.T) {
 	}
 	if got := m.displayItems[1].Container.Name; got != "worker" {
 		t.Fatalf("filtered container = %q, want %q", got, "worker")
+	}
+}
+
+func TestRebuildDisplayItemsFilterHealthTokenIsExact(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "web", Stack: "prod", State: "running", Health: "healthy"},
+			{Name: "worker", Stack: "prod", State: "running", Health: "unhealthy"},
+			{Name: "cache", Stack: "prod", State: "running", Health: "-"},
+		},
+	}
+
+	m.searchInput.SetValue("health:healthy")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 1 || m.displayItems[1].Container.Name != "web" {
+		t.Fatalf("health:healthy matched %d containers (first %q), want only web",
+			m.visibleContainers, m.displayItems[1].Container.Name)
+	}
+
+	// Containers without a healthcheck are addressable as health:none.
+	m.searchInput.SetValue("health:none")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 1 || m.displayItems[1].Container.Name != "cache" {
+		t.Fatalf("health:none matched %d containers, want only cache", m.visibleContainers)
+	}
+
+	// state: is exact too — "state:running" must not match "not running"-like values.
+	m.dockerData.Containers[2].State = "exited"
+	m.searchInput.SetValue("state:exit")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 0 {
+		t.Fatalf("state:exit (partial) matched %d containers, want 0", m.visibleContainers)
 	}
 }
 
@@ -1342,56 +1376,114 @@ func TestOverlayCenterPreservesBackground(t *testing.T) {
 	}
 }
 
-func TestToggleFollowOnJumpsToBottom(t *testing.T) {
-	m := newTestModel()
-	m.viewMode = ViewDetail
-	m.detailContainerID = "abc"
-	m.detailLogRows = 10
-	m.detailLogs = make([]string, 30)
-	m.detailScrollOffset = 5 // scrolled up, not at bottom
-
-	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "f"}, &m)
-	updated := updatedModel.(*Model)
-
-	expectedScroll := 30 - 10 // maxScroll = len(logs) - logRows = 20
-	if updated.detailScrollOffset != expectedScroll {
-		t.Fatalf("detailScrollOffset = %d, want %d (should jump to bottom on follow toggle)", updated.detailScrollOffset, expectedScroll)
+// Toggling follow on parks the view where new lines will land. Which end that
+// is depends on render order — the top under newest-first, the bottom under
+// oldest-first — so both are asserted and neither can silently regress.
+func TestToggleFollowOnJumpsToPinnedEnd(t *testing.T) {
+	tests := []struct {
+		name       string
+		order      panels.LogOrder
+		wantScroll int
+	}{
+		{"newest first pins to top", panels.LogOrderNewest, 0},
+		{"oldest first pins to bottom", panels.LogOrderOldest, 30 - 10},
 	}
-	if !updated.logFollowing {
-		t.Fatal("logFollowing should be true after toggling follow on")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.viewMode = ViewDetail
+			m.detailContainerID = "abc"
+			m.detailLogRows = 10
+			m.logOrder = tt.order
+			m.detailLogs = make([]string, 30)
+			m.detailScrollOffset = 5 // scrolled away from either end
+
+			updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "f"}, &m)
+			updated := updatedModel.(*Model)
+
+			if updated.detailScrollOffset != tt.wantScroll {
+				t.Fatalf("detailScrollOffset = %d, want %d", updated.detailScrollOffset, tt.wantScroll)
+			}
+			if !updated.logFollowing {
+				t.Fatal("logFollowing should be true after toggling follow on")
+			}
+		})
 	}
 }
 
-func TestFollowModeAutoScrollsToBottom(t *testing.T) {
-	m := newTestModel()
-	m.viewMode = ViewDetail
-	m.detailContainerID = "abc"
-	m.detailLogRows = 10
-	m.logFollowing = true
-	m.logFollowSeq = 1
-	m.logFollowCh = make(chan string, 64)
-	m.detailLogs = nil
-	m.detailScrollOffset = 0
+// Incoming follow lines keep the newest line visible in both orders.
+func TestFollowModeAutoScrollsToPinnedEnd(t *testing.T) {
+	tests := []struct {
+		name       string
+		order      panels.LogOrder
+		wantScroll int
+	}{
+		{"newest first stays at top", panels.LogOrderNewest, 0},
+		{"oldest first tracks the bottom", panels.LogOrderOldest, 25 - 10},
+	}
 
-	// Simulate 25 log lines arriving via follow
-	for i := 0; i < 25; i++ {
-		msg := LogFollowLineMsg{Line: fmt.Sprintf("log line %d", i), Seq: 1}
-		updated, _ := m.Update(msg)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.viewMode = ViewDetail
+			m.detailContainerID = "abc"
+			m.detailLogRows = 10
+			m.logOrder = tt.order
+			m.logFollowing = true
+			m.logFollowSeq = 1
+			m.logFollowCh = make(chan string, 64)
+			m.detailLogs = nil
+			m.detailScrollOffset = m.followPinOffset()
+
+			// Simulate 25 log lines arriving via follow
+			for i := 0; i < 25; i++ {
+				msg := LogFollowLineMsg{Line: fmt.Sprintf("log line %d", i), Seq: 1}
+				updated, _ := m.Update(msg)
+				switch v := updated.(type) {
+				case Model:
+					m = v
+				case *Model:
+					m = *v
+				}
+			}
+
+			if len(m.detailLogs) != 25 {
+				t.Fatalf("detailLogs count = %d, want 25", len(m.detailLogs))
+			}
+			if m.detailScrollOffset != tt.wantScroll {
+				t.Fatalf("detailScrollOffset = %d, want %d", m.detailScrollOffset, tt.wantScroll)
+			}
+		})
+	}
+}
+
+// A user who has scrolled away from the pinned end must not be yanked back
+// when new lines arrive, in either order.
+func TestFollowModeDoesNotStealScrollWhenScrolledAway(t *testing.T) {
+	for _, order := range []panels.LogOrder{panels.LogOrderNewest, panels.LogOrderOldest} {
+		m := newTestModel()
+		m.viewMode = ViewDetail
+		m.detailContainerID = "abc"
+		m.detailLogRows = 10
+		m.logOrder = order
+		m.logFollowing = true
+		m.logFollowSeq = 1
+		m.logFollowCh = make(chan string, 64)
+		m.detailLogs = make([]string, 40)
+		m.detailScrollOffset = 12 // deliberately mid-buffer, not pinned
+
+		updated, _ := m.Update(LogFollowLineMsg{Line: "new line", Seq: 1})
 		switch v := updated.(type) {
 		case Model:
 			m = v
 		case *Model:
 			m = *v
 		}
-	}
 
-	if len(m.detailLogs) != 25 {
-		t.Fatalf("detailLogs count = %d, want 25", len(m.detailLogs))
-	}
-
-	expectedScroll := 25 - m.detailLogRows // 15
-	if m.detailScrollOffset != expectedScroll {
-		t.Fatalf("detailScrollOffset = %d, want %d (should autoscroll to bottom)", m.detailScrollOffset, expectedScroll)
+		if m.detailScrollOffset != 12 {
+			t.Fatalf("order %v: detailScrollOffset = %d, want 12 (scroll position should be preserved)", order, m.detailScrollOffset)
+		}
 	}
 }
 
@@ -1545,5 +1637,326 @@ func TestViewNoCursorWhenNotEditing(t *testing.T) {
 	v := m.View()
 	if v.Cursor != nil {
 		t.Fatal("View().Cursor should be nil when no input is active")
+	}
+}
+
+func TestToggleLogOrderKeyFlipsOrder(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 30)
+	m.logOrder = panels.LogOrderNewest
+
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "o"}, &m)
+	updated := updatedModel.(*Model)
+	if updated.logOrder != panels.LogOrderOldest {
+		t.Fatalf("logOrder = %v, want oldest after first toggle", updated.logOrder)
+	}
+
+	updatedModel, _ = handleDetailKey(tea.KeyPressMsg{Text: "o"}, updated)
+	updated = updatedModel.(*Model)
+	if updated.logOrder != panels.LogOrderNewest {
+		t.Fatalf("logOrder = %v, want newest after second toggle", updated.logOrder)
+	}
+}
+
+// Flipping order mirrors the scroll offset so the lines on screen stay on
+// screen, rather than the view jumping to one end.
+func TestToggleLogOrderMirrorsScrollOffset(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 30) // maxScroll = 20
+	m.logOrder = panels.LogOrderNewest
+	m.detailScrollOffset = 6
+
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "o"}, &m)
+	updated := updatedModel.(*Model)
+
+	if want := 20 - 6; updated.detailScrollOffset != want {
+		t.Fatalf("detailScrollOffset = %d, want %d (mirrored)", updated.detailScrollOffset, want)
+	}
+
+	// Mirroring is an involution: toggling back restores the original offset.
+	updatedModel, _ = handleDetailKey(tea.KeyPressMsg{Text: "o"}, updated)
+	updated = updatedModel.(*Model)
+	if updated.detailScrollOffset != 6 {
+		t.Fatalf("detailScrollOffset after toggling back = %d, want 6", updated.detailScrollOffset)
+	}
+}
+
+// The dashboard binds "o" to cycle sort; the detail view binds it to log
+// order. They live in different handlers and must not interfere.
+func TestToggleLogOrderDoesNotDisturbDashboardSort(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 30)
+	sortBefore := m.dashboardSort
+
+	updatedModel, _ := handleDetailKey(tea.KeyPressMsg{Text: "o"}, &m)
+	updated := updatedModel.(*Model)
+
+	if updated.dashboardSort != sortBefore {
+		t.Fatalf("dashboardSort = %v, want %v (detail-view 'o' must not change sort)", updated.dashboardSort, sortBefore)
+	}
+}
+
+// scrollToLogLine takes a storage index; under newest-first that maps to a
+// different row, and centring must follow the row, not the storage index.
+func TestScrollToLogLineMapsThroughOrder(t *testing.T) {
+	m := newTestModel()
+	m.detailLogRows = 10
+	m.detailLogs = make([]string, 100) // maxScroll = 90
+
+	// Storage index 5 is near the oldest end. Under oldest-first it renders
+	// near the top; under newest-first it renders near the bottom.
+	m.logOrder = panels.LogOrderOldest
+	m.scrollToLogLine(5)
+	oldestOffset := m.detailScrollOffset
+
+	m.logOrder = panels.LogOrderNewest
+	m.scrollToLogLine(5)
+	newestOffset := m.detailScrollOffset
+
+	if oldestOffset != 0 {
+		t.Errorf("oldest-first: offset = %d, want 0 (line 5 is near the top, clamped)", oldestOffset)
+	}
+	if want := 100 - 1 - 5 - 10/2; newestOffset != want {
+		t.Errorf("newest-first: offset = %d, want %d (line 5 renders near the bottom)", newestOffset, want)
+	}
+}
+
+func statusFor(ref string, st registry.State) registry.Status {
+	return registry.Status{Ref: ref, State: st, CheckedAt: time.Now()}
+}
+
+func TestHasImageUpdate(t *testing.T) {
+	m := newTestModel()
+	m.imageUpdates = map[string]registry.Status{
+		"nginx:alpine":        statusFor("nginx:alpine", registry.StateAvailable),
+		"caddy:2":             statusFor("caddy:2", registry.StateCurrent),
+		"caddy-hetzner:local": statusFor("caddy-hetzner:local", registry.StateUnwatchable),
+		"ghcr.io/x/y:latest":  statusFor("ghcr.io/x/y:latest", registry.StateError),
+	}
+
+	tests := []struct {
+		ref  string
+		want bool
+	}{
+		{"nginx:alpine", true},
+		{"caddy:2", false},
+		{"caddy-hetzner:local", false}, // unwatchable is not an update
+		{"ghcr.io/x/y:latest", false},  // errors must not be shown as updates
+		{"never-checked:1", false},
+		{"  nginx:alpine  ", true}, // padding tolerated
+	}
+	for _, tt := range tests {
+		if got := m.hasImageUpdate(tt.ref); got != tt.want {
+			t.Errorf("hasImageUpdate(%q) = %v, want %v", tt.ref, got, tt.want)
+		}
+	}
+}
+
+// The summary must never imply everything is current when some images could
+// not be reached.
+func TestUpdateSummaryLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		checking bool
+		statuses map[string]registry.Status
+		want     string
+	}{
+		{"no check has run", false, nil, ""},
+		{"in progress", true, nil, "checking updates"},
+		{
+			"all current", false,
+			map[string]registry.Status{"a": statusFor("a", registry.StateCurrent)},
+			"up to date",
+		},
+		{
+			"unwatchable only still counts as up to date", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateCurrent),
+				"b": statusFor("b", registry.StateUnwatchable),
+			},
+			"up to date",
+		},
+		{
+			"updates available", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateAvailable),
+				"b": statusFor("b", registry.StateAvailable),
+				"c": statusFor("c", registry.StateCurrent),
+			},
+			"2 updates",
+		},
+		{
+			"errors reported alongside updates", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateAvailable),
+				"b": statusFor("b", registry.StateError),
+			},
+			"1 updates, 1 unchecked",
+		},
+		{
+			"errors alone must not read as up to date", false,
+			map[string]registry.Status{
+				"a": statusFor("a", registry.StateCurrent),
+				"b": statusFor("b", registry.StateError),
+			},
+			"1 unchecked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.updateChecking = tt.checking
+			m.imageUpdates = tt.statuses
+			if got := m.updateSummaryLabel(); got != tt.want {
+				t.Errorf("updateSummaryLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The check is manual by design; the refresh tick must never trigger it.
+func TestUpdateCheckIsNotTriggeredByRefresh(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{{ID: "a", Name: "a", Image: "nginx:alpine"}},
+	}
+
+	updated, _ := m.Update(DockerDataMsg{Data: m.dockerData})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Fatal("a docker refresh started an update check; checks must be manual only")
+	}
+	if len(m.imageUpdates) != 0 {
+		t.Fatal("a docker refresh populated update results")
+	}
+}
+
+func TestUpdateCheckMsgPopulatesResults(t *testing.T) {
+	m := newTestModel()
+	m.updateChecking = true
+
+	updated, _ := m.Update(UpdateCheckMsg{Statuses: []registry.Status{
+		statusFor("nginx:alpine", registry.StateAvailable),
+		statusFor("caddy:2", registry.StateCurrent),
+	}})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Error("updateChecking should be cleared once results arrive")
+	}
+	if !m.hasImageUpdate("nginx:alpine") {
+		t.Error("nginx:alpine should be flagged as having an update")
+	}
+	if m.hasImageUpdate("caddy:2") {
+		t.Error("caddy:2 is current and should not be flagged")
+	}
+	if m.updateCheckedAt.IsZero() {
+		t.Error("updateCheckedAt should be set so staleness can be shown")
+	}
+}
+
+func TestUpdateCheckMsgErrorIsReported(t *testing.T) {
+	m := newTestModel()
+	m.updateChecking = true
+
+	updated, _ := m.Update(UpdateCheckMsg{Err: errors.New("docker socket unavailable")})
+	switch v := updated.(type) {
+	case Model:
+		m = v
+	case *Model:
+		m = *v
+	}
+
+	if m.updateChecking {
+		t.Error("updateChecking should be cleared after a failure")
+	}
+	if m.notifications.len() == 0 {
+		t.Error("a failed update check should raise a notification")
+	}
+}
+
+// Only the tick chain's own result may schedule the next tick. Init, `r`, a
+// settings save and every action also fire an immediate collect; if those
+// results scheduled ticks too, each would start a permanent extra chain and
+// the poll rate would double at startup and grow with every `r`.
+func TestOneOffCollectionDoesNotContinueTickChain(t *testing.T) {
+	m := newTestModel()
+	m.focused = true
+	m.tickEpoch = 1
+	m.systemRefreshInterval = time.Second
+	m.dockerRefreshInterval = time.Second
+	m.weatherRefreshInterval = time.Minute
+
+	for _, msg := range []tea.Msg{
+		SystemDataMsg{Epoch: oneShot},
+		DockerDataMsg{Epoch: oneShot},
+		WeatherDataMsg{Epoch: oneShot},
+	} {
+		next, cmd := m.Update(msg)
+		m = next.(Model)
+		if cmd != nil {
+			t.Fatalf("%T with Epoch oneShot scheduled a command, want none", msg)
+		}
+	}
+
+	// A result from a chain retired by an epoch bump must not revive it.
+	next, cmd := m.Update(SystemDataMsg{Epoch: 7})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("SystemDataMsg from a stale epoch scheduled a command, want none")
+	}
+
+	// The live chain's own result does continue it.
+	for _, msg := range []tea.Msg{
+		SystemDataMsg{Epoch: 1},
+		DockerDataMsg{Epoch: 1},
+		WeatherDataMsg{Epoch: 1},
+	} {
+		next, cmd := m.Update(msg)
+		m = next.(Model)
+		if cmd == nil {
+			t.Fatalf("%T with the live epoch scheduled nothing, want the next tick", msg)
+		}
+	}
+}
+
+func TestFollowStreamFailureIsShownInsteadOfLoading(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.logFollowing = true
+	m.logFollowSeq = 3
+
+	next, cmd := m.Update(LogFollowLineMsg{Done: true, Err: errors.New("docker logs: status 404"), Seq: 3})
+	m = next.(Model)
+	if m.detailLogsErr == nil {
+		t.Fatal("detailLogsErr = nil after a failed stream, want the error surfaced")
+	}
+	if m.logFollowing {
+		t.Fatal("logFollowing = true after the stream failed")
+	}
+	if cmd != nil {
+		t.Fatal("a failed stream scheduled a command, want no auto-restart")
 	}
 }

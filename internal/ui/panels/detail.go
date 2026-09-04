@@ -23,7 +23,7 @@ func capitalize(s string) string {
 const detailLabelWidth = 8
 
 // DetailInfoPanelHeight returns the rendered info panel height for the detail view.
-func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, hostname string, width int) int {
+func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDetail, hostname string, width int, update *UpdateInfo) int {
 	if c == nil {
 		return 7 // 4 baseline rows + border/title chrome
 	}
@@ -31,10 +31,10 @@ func DetailInfoPanelHeight(c *collector.Container, meta *collector.ContainerDeta
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
-	return len(detailInfoLines(c, meta, hostname, innerWidth)) + 3
+	return len(detailInfoLines(c, meta, hostname, innerWidth, update)) + 3
 }
 
-func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, hostname string, innerWidth int) []string {
+func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, hostname string, innerWidth int, update *UpdateInfo) []string {
 	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
 	valueStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary)
 
@@ -63,6 +63,7 @@ func detailInfoLines(c *collector.Container, meta *collector.ContainerDetail, ho
 		formatStackHealthLine(labelStyle, valueStyle, stackVal, healthStyled, innerWidth),
 		formatDetailLine(labelStyle, valueStyle, "Ports", collector.FormatPorts(c.Ports), innerWidth),
 	}
+	infoLines = append(infoLines, updateDetailLines(update, innerWidth, time.Now())...)
 
 	if meta != nil {
 		if meta.RestartPolicy != "" && meta.RestartPolicy != "-" {
@@ -454,7 +455,9 @@ func RenderDetail(
 	confirmAction, actionResult string,
 	scrollOffset, width, height int,
 	logFollowing bool,
+	logOrder LogOrder,
 	logSearch LogSearch,
+	update *UpdateInfo,
 ) string {
 	if c == nil {
 		return "No container selected"
@@ -482,7 +485,7 @@ func RenderDetail(
 
 	infoTitle := lipgloss.NewStyle().Inline(true).MaxWidth(titleAvail).Render(infoTitleLeft)
 
-	infoLines := detailInfoLines(c, meta, hostname, innerWidth)
+	infoLines := detailInfoLines(c, meta, hostname, innerWidth, update)
 	infoPanelHeight := len(infoLines) + 3 // border(2) + title(1)
 	infoContent := strings.Join(infoLines, "\n")
 	infoPanel := components.Panel(infoTitle, infoContent, width, infoPanelHeight, false)
@@ -497,32 +500,16 @@ func RenderDetail(
 		logContentHeight = 1
 	}
 
-	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth)
+	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth, logOrder)
+	lineCount := len(logLines)
+	if logState == detailLogStateLoaded {
+		lineCount = len(logs)
+	}
+	scrollOffset = clampScroll(scrollOffset, lineCount, logContentHeight)
 
-	// Clamp scroll offset
-	maxScroll := len(logLines) - logContentHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, lineCount, titleAvail, logFollowing, logOrder, logSearch)
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logSearch)
-
-	// Slice visible log lines
-	endIdx := scrollOffset + logContentHeight
-	if endIdx > len(logLines) {
-		endIdx = len(logLines)
-	}
-	visible := logLines[scrollOffset:endIdx]
-	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth)
-	for len(visible) < logContentHeight {
-		visible = append(visible, "")
-	}
+	visible := visibleLogRows(logs, logLines, logState, scrollOffset, logContentHeight, innerWidth, logOrder, logSearch, false)
 
 	logContent := strings.Join(visible, "\n")
 	logPanel := components.Panel(logTitleLeft, logContent, width, logPanelHeight, true)
@@ -596,10 +583,97 @@ func renderDetailActionBar(c *collector.Container, confirmAction, actionResult s
 		Render(content)
 }
 
+// logLineStyle carries the per-row rendering choices for formatLogLine.
+type logLineStyle struct {
+	// withSource treats a leading "[name] " as the container a stack log
+	// line came from. Only stack views set it: a single container's own
+	// "[ERROR] ..." prefix is a log level, not a source.
+	withSource bool
+	// highlight paints a search match. Every segment carries the background
+	// itself, because wrapping an already-styled row in a background style
+	// stops at the first inner reset and misses the matched text.
+	highlight logHighlight
+}
+
+// logHighlight is the colour pair for a search-match row; the zero value
+// means no highlight. fg, when set, overrides every segment's foreground.
+type logHighlight struct {
+	bg, fg color.Color
+}
+
+// searchHighlight picks the highlight for the log line at storage index idx.
+// Colours come from the theme so the highlight survives light variants; the
+// current match inverts onto the primary colour to stand apart from the rest.
+func searchHighlight(idx int, search LogSearch) logHighlight {
+	if search.Query == "" || !search.MatchSet[idx] {
+		return logHighlight{}
+	}
+	if idx == search.CurrentLine {
+		return logHighlight{bg: styles.Primary, fg: styles.TextInverse}
+	}
+	return logHighlight{bg: styles.BgFocus}
+}
+
+// renderLogWindow formats only the rows that fit on screen. logs is in
+// storage order (oldest first); scrollOffset counts rows in render order, so
+// under LogOrderNewest row r shows storage index n-1-r. Formatting per row
+// rather than per buffer keeps a 1000-line follow session from re-rendering
+// every line for every incoming message.
+func renderLogWindow(logs []string, scrollOffset, height, width int, order LogOrder, search LogSearch, withSource bool) []string {
+	n := len(logs)
+	scrollOffset = max(scrollOffset, 0)
+	end := min(scrollOffset+height, n)
+	rows := make([]string, 0, max(height, 0))
+	for row := scrollOffset; row < end; row++ {
+		idx := order.RenderIndex(row, n)
+		rows = append(rows, formatLogLine(logs[idx], width, logLineStyle{
+			withSource: withSource,
+			highlight:  searchHighlight(idx, search),
+		}))
+	}
+	return rows
+}
+
+// clampScroll keeps a scroll offset within [0, lineCount-height].
+func clampScroll(offset, lineCount, height int) int {
+	return min(max(offset, 0), max(0, lineCount-height))
+}
+
+// visibleLogRows returns exactly height rows for the log panel: formatted log
+// lines for the loaded state, the placeholder prose otherwise, padded with
+// blanks.
+func visibleLogRows(logs, placeholder []string, state detailLogState, scrollOffset, height, width int, order LogOrder, search LogSearch, withSource bool) []string {
+	var rows []string
+	if state == detailLogStateLoaded {
+		rows = renderLogWindow(logs, scrollOffset, height, width, order, search, withSource)
+	} else {
+		end := min(scrollOffset+height, len(placeholder))
+		rows = append(rows, placeholder[min(max(scrollOffset, 0), end):end]...)
+	}
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
 // formatLogLine parses Docker timestamps and colorizes log levels.
-func formatLogLine(line string, maxWidth int) string {
-	timeStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
-	msgStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
+func formatLogLine(line string, maxWidth int, opts logLineStyle) string {
+	base := lipgloss.NewStyle()
+	if opts.highlight.bg != nil {
+		base = base.Background(opts.highlight.bg)
+	}
+	fg := func(c color.Color) lipgloss.Style {
+		if opts.highlight.fg != nil {
+			c = opts.highlight.fg
+		}
+		return base.Foreground(c)
+	}
+	sep := " "
+	if opts.highlight.bg != nil {
+		sep = base.Render(" ")
+	}
+	timeStyle := fg(styles.TextMuted)
+	msgStyle := fg(styles.TextSecondary)
 
 	var ts, msg string
 
@@ -619,35 +693,42 @@ func formatLogLine(line string, maxWidth int) string {
 	}
 
 	source := ""
-	if prefixedSource, rest, ok := splitLogSourcePrefix(msg); ok {
-		source = prefixedSource
-		msg = rest
+	if opts.withSource {
+		if prefixedSource, rest, ok := splitLogSourcePrefix(msg); ok {
+			source = prefixedSource
+			msg = rest
+		}
 	}
 
 	// Detect log level and pick color for the message
 	levelColor := detectLogLevel(msg)
 	if levelColor != nil {
-		msgStyle = lipgloss.NewStyle().Foreground(levelColor)
+		msgStyle = fg(levelColor)
 	}
 
 	msgRendered := msgStyle.Render(msg)
 	if source != "" {
-		sourceStyle := lipgloss.NewStyle().Foreground(stackLogSourceColor(source)).Bold(true)
+		sourceStyle := fg(stackLogSourceColor(source)).Bold(true)
 		if msg == "" {
 			msgRendered = sourceStyle.Render("[" + source + "]")
 		} else {
-			msgRendered = sourceStyle.Render("["+source+"]") + " " + msgRendered
+			msgRendered = sourceStyle.Render("["+source+"]") + sep + msgRendered
 		}
 	}
 
 	var rendered string
 	if ts != "" {
-		rendered = timeStyle.Render(ts) + " " + msgRendered
+		rendered = timeStyle.Render(ts) + sep + msgRendered
 	} else {
 		rendered = msgRendered
 	}
 
-	return lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+	out := lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+	if opts.highlight.bg != nil {
+		// Pad so the highlight spans the whole row, not just the text.
+		out = base.Inline(true).Width(maxWidth).Render(out)
+	}
+	return out
 }
 
 func splitLogSourcePrefix(msg string) (string, string, bool) {
@@ -675,6 +756,38 @@ func stackLogSourceColor(name string) color.Color {
 	return palette[sum%len(palette)]
 }
 
+// LogOrder controls the direction log lines are rendered in. Only rendering
+// is affected — Model.detailLogs stays in arrival order, so search indices,
+// the line cap, and the follow stream are all unaffected by this setting.
+type LogOrder int
+
+const (
+	// LogOrderNewest puts the most recent line at the top of the panel.
+	LogOrderNewest LogOrder = iota
+	// LogOrderOldest puts the oldest line at the top, chronologically.
+	LogOrderOldest
+)
+
+// String renders the order plus its toggle key for the panel title. The hint
+// lives here rather than in the action bar because the bar is already at its
+// width budget — adding an entry there wraps it onto a second line.
+func (o LogOrder) String() string {
+	if o == LogOrderOldest {
+		return "▼ oldest [o]"
+	}
+	return "▲ newest [o]"
+}
+
+// RenderIndex maps a storage index within n lines to the row it occupies on
+// screen under this order. Self-inverse: applying it twice returns the
+// original index.
+func (o LogOrder) RenderIndex(storageIndex, n int) int {
+	if o == LogOrderOldest {
+		return storageIndex
+	}
+	return n - 1 - storageIndex
+}
+
 type detailLogState int
 
 const (
@@ -685,7 +798,7 @@ const (
 	detailLogStateError
 )
 
-func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int) ([]string, detailLogState) {
+func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth int, order LogOrder) ([]string, detailLogState) {
 	switch {
 	case logs == nil && logsErr == nil && logFollowing:
 		return []string{
@@ -714,15 +827,13 @@ func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth 
 			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Docker returned no log lines for this container."),
 		}, detailLogStateEmpty
 	default:
-		rendered := make([]string, 0, len(logs))
-		for _, line := range logs {
-			rendered = append(rendered, formatLogLine(line, innerWidth))
-		}
-		return rendered, detailLogStateLoaded
+		// Loaded: rows are formatted on demand by renderLogWindow, which
+		// also applies the order.
+		return nil, detailLogStateLoaded
 	}
 }
 
-func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logFollowing bool, logSearch ...LogSearch) string {
+func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCount, titleAvail int, logFollowing bool, order LogOrder, logSearch ...LogSearch) string {
 	titleStyle := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
 
@@ -754,6 +865,7 @@ func renderLogTitle(state detailLogState, scrollOffset, logContentHeight, lineCo
 		if logFollowing {
 			statusParts = append(statusParts, "following")
 		}
+		statusParts = append(statusParts, order.String())
 		statusParts = append(statusParts, fmt.Sprintf("%d lines", lineCount))
 	case detailLogStateLoading:
 		statusParts = append(statusParts, "fetching tail")
@@ -801,25 +913,6 @@ type LogSearch struct {
 	Current     int // 1-based index into matches
 }
 
-func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearch, width int) {
-	if logSearch.Query == "" || len(logSearch.MatchSet) == 0 {
-		return
-	}
-	matchBg := lipgloss.Color("#3a3000")
-	currentBg := lipgloss.Color("#5a4a00")
-	for i := range visible {
-		origIdx := scrollOffset + i
-		if !logSearch.MatchSet[origIdx] {
-			continue
-		}
-		bg := matchBg
-		if origIdx == logSearch.CurrentLine {
-			bg = currentBg
-		}
-		visible[i] = lipgloss.NewStyle().Background(bg).Width(width).Inline(true).Render(visible[i])
-	}
-}
-
 func detectLogLevel(msg string) color.Color {
 	check := msg
 	if len(check) > 50 {
@@ -839,4 +932,102 @@ func detectLogLevel(msg string) color.Color {
 	}
 
 	return nil
+}
+
+// UpdateInfo describes an image's update state for the detail panel.
+//
+// Deliberately a plain struct rather than the collector's Status: the panel
+// renders whatever it is handed and stays independent of how the check works.
+type UpdateInfo struct {
+	// State is one of "current", "available", "unwatchable", "error".
+	State        string
+	LocalDigest  string
+	RemoteDigest string
+	// Reason explains the "unwatchable" and "error" states.
+	Reason string
+	// Command applies the update. Empty when the container was not created
+	// by compose, in which case no command is offered rather than a guess.
+	Command   string
+	CheckedAt time.Time
+}
+
+// shortDigest trims a sha256 digest to something readable in a fixed column
+// while staying long enough to compare two by eye.
+func shortDigest(d string) string {
+	d = strings.TrimPrefix(d, "sha256:")
+	if len(d) > 12 {
+		return d[:12]
+	}
+	if d == "" {
+		return "-"
+	}
+	return d
+}
+
+// updateDetailLines renders the update rows for the detail panel. Returns nil
+// when no check has run, so the panel is unchanged until the user asks.
+func updateDetailLines(u *UpdateInfo, innerWidth int, now time.Time) []string {
+	if u == nil {
+		return nil
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(styles.TextMuted).Width(detailLabelWidth)
+
+	var valueStyle lipgloss.Style
+	var text string
+	switch u.State {
+	case "available":
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Warning).Bold(true)
+		text = fmt.Sprintf("⬆ update available  %s → %s",
+			shortDigest(u.LocalDigest), shortDigest(u.RemoteDigest))
+	case "current":
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Success)
+		text = "up to date  " + shortDigest(u.LocalDigest)
+	case "unwatchable":
+		// Not a problem: locally-built images and digest pins land here, and
+		// styling it as a warning would cry wolf.
+		valueStyle = lipgloss.NewStyle().Foreground(styles.TextMuted)
+		text = "not tracked"
+		if u.Reason != "" {
+			text += "  " + u.Reason
+		}
+	default:
+		valueStyle = lipgloss.NewStyle().Foreground(styles.Error)
+		text = "check failed"
+		if u.Reason != "" {
+			text += "  " + u.Reason
+		}
+	}
+
+	if age := checkAgeLabel(u.CheckedAt, now); age != "" {
+		text += "  (" + age + ")"
+	}
+
+	lines := []string{formatDetailLine(labelStyle, valueStyle, "Update", text, innerWidth)}
+
+	if u.State == "available" && u.Command != "" {
+		cmdStyle := lipgloss.NewStyle().Foreground(styles.Info)
+		lines = append(lines,
+			formatDetailLine(labelStyle, cmdStyle, "Apply", u.Command+"   [c] copy", innerWidth))
+	}
+	return lines
+}
+
+// checkAgeLabel describes how stale a check result is, so a cached badge is
+// never mistaken for a fresh one.
+func checkAgeLabel(checkedAt, now time.Time) string {
+	if checkedAt.IsZero() {
+		return ""
+	}
+	d := now.Sub(checkedAt)
+	switch {
+	case d < time.Minute:
+		return "just checked"
+	case d < time.Hour:
+		return fmt.Sprintf("checked %dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("checked %dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("checked %dd ago", int(d.Hours()/24))
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,16 +23,20 @@ type netSample struct {
 	at      time.Time
 }
 
-// prevCPU and prevNet are intentionally package-level mutable samples.
-// CollectSystem is only called from the Bubble Tea update loop on a single
-// goroutine, so this state has single-goroutine ownership. Callers must not
-// invoke CollectSystem concurrently.
+// prevCPU and prevNet are package-level samples compared across ticks to
+// turn cumulative counters into rates. Collection normally runs from one tick
+// chain, but a manual refresh (`r`) can overlap with a tick's collect, so
+// access is serialised rather than assumed single-threaded.
 var (
-	prevCPU cpuSample
-	prevNet netSample
+	systemMu sync.Mutex
+	prevCPU  cpuSample
+	prevNet  netSample
 )
 
 func CollectSystem(disks []config.Disk) (SystemData, error) {
+	systemMu.Lock()
+	defer systemMu.Unlock()
+
 	var data SystemData
 	data.CollectedAt = time.Now()
 
