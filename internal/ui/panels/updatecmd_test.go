@@ -49,6 +49,66 @@ func TestUpdateCommand(t *testing.T) {
 			"docker compose -f /srv/a.yaml -f /srv/b.yaml up -d --pull always web",
 		},
 
+		{
+			"project name is passed so a renamed project is not duplicated",
+			map[string]string{
+				labelComposeProject:     "infra",
+				labelComposeConfigFiles: "/srv/stacks/compose.yaml",
+				labelComposeService:     "web",
+			},
+			"docker compose -p infra -f /srv/stacks/compose.yaml up -d --pull always web",
+		},
+		{
+			"working dir matching the first file's directory is implied",
+			map[string]string{
+				labelComposeProject:     "infra",
+				labelComposeConfigFiles: "/srv/stacks/compose.yaml",
+				labelComposeWorkingDir:  "/srv/stacks/",
+				labelComposeService:     "web",
+			},
+			"docker compose -p infra -f /srv/stacks/compose.yaml up -d --pull always web",
+		},
+		{
+			"a different working dir is passed explicitly",
+			map[string]string{
+				labelComposeProject:     "infra",
+				labelComposeConfigFiles: "/srv/stacks/compose/web.yaml",
+				labelComposeWorkingDir:  "/srv/stacks",
+				labelComposeService:     "web",
+			},
+			"docker compose -p infra --project-directory /srv/stacks -f /srv/stacks/compose/web.yaml up -d --pull always web",
+		},
+		{
+			"env files are repeated in load order",
+			map[string]string{
+				labelComposeProject:     "infra",
+				labelComposeConfigFiles: "/srv/stacks/compose.yaml",
+				labelComposeEnvFiles:    "/srv/stacks/.env,/srv/stacks/secrets.env",
+				labelComposeService:     "web",
+			},
+			"docker compose -p infra -f /srv/stacks/compose.yaml --env-file /srv/stacks/.env --env-file /srv/stacks/secrets.env up -d --pull always web",
+		},
+		{
+			"relative paths from compose v1 are anchored to the working dir",
+			map[string]string{
+				labelComposeProject:     "infra",
+				labelComposeConfigFiles: "docker-compose.yml",
+				labelComposeWorkingDir:  "/srv/stacks",
+				labelComposeEnvFiles:    ".env",
+				labelComposeService:     "web",
+			},
+			"docker compose -p infra -f /srv/stacks/docker-compose.yml --env-file /srv/stacks/.env up -d --pull always web",
+		},
+		{
+			"project name with shell characters is quoted",
+			map[string]string{
+				labelComposeProject:     "my stack",
+				labelComposeConfigFiles: "/srv/compose.yaml",
+				labelComposeService:     "web",
+			},
+			"docker compose -p 'my stack' -f /srv/compose.yaml up -d --pull always web",
+		},
+
 		// Without compose labels there is no correct command to offer, and a
 		// wrong one is worse than none.
 		{"not a compose container", map[string]string{}, ""},

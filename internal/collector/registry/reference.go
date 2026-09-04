@@ -79,7 +79,10 @@ func ParseReference(image string) (Reference, error) {
 			name = remainder[slash+1:]
 		}
 	}
-	if ref.Registry == "" {
+	// docker.io and index.docker.io are the same registry as
+	// registry-1.docker.io; Docker folds all three, so must we, or the
+	// manifest request goes to the marketing site.
+	if ref.Registry == "" || ref.Registry == "docker.io" || ref.Registry == "index.docker.io" {
 		ref.Registry = defaultRegistry
 	}
 
@@ -114,6 +117,23 @@ func isRegistryHost(segment string) bool {
 	return segment == "localhost" ||
 		strings.Contains(segment, ".") ||
 		strings.Contains(segment, ":")
+}
+
+// IsImageID reports whether s is a bare image ID ("sha256:<64 hex>" or the
+// 64 hex digits alone) rather than a name. Docker rewrites a container's
+// Image field to the ID once the tag it was started from has moved to a
+// newer image — i.e. after `docker compose pull` without `up`.
+func IsImageID(s string) bool {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "sha256:")
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // DigestOf extracts the digest from a RepoDigests entry such as

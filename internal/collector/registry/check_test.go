@@ -423,14 +423,24 @@ func TestDockerConfigStoreResolvesDockerHubLegacyKey(t *testing.T) {
 }
 
 func TestDockerConfigStoreReportsCredentialHelpers(t *testing.T) {
-	t.Run("global credsStore", func(t *testing.T) {
-		path := writeDockerConfig(t, `{"credsStore": "desktop", "auths": {}}`)
-		got := LoadDockerConfig(path).Lookup("any.example")
+	t.Run("global credsStore applies to logged-in hosts", func(t *testing.T) {
+		// `docker login` writes an empty auths entry when a helper holds the
+		// secret; that entry is what marks the host as helper-backed.
+		path := writeDockerConfig(t, `{"credsStore": "desktop", "auths": {"ghcr.io": {}}}`)
+		got := LoadDockerConfig(path).Lookup("ghcr.io")
 		if got.HelperName != "desktop" {
 			t.Errorf("HelperName = %q, want desktop", got.HelperName)
 		}
 		if got.Usable() {
 			t.Error("helper-backed credentials must not be reported as usable")
+		}
+	})
+
+	t.Run("global credsStore does not cover hosts never logged in to", func(t *testing.T) {
+		path := writeDockerConfig(t, `{"credsStore": "desktop", "auths": {}}`)
+		got := LoadDockerConfig(path).Lookup("any.example")
+		if got.Usable() || got.HelperName != "" {
+			t.Errorf("got %+v, want zero value (anonymous access)", got)
 		}
 	})
 

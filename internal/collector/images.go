@@ -30,6 +30,10 @@ func UpdateTargets(containers []Container) ([]registry.Image, error) {
 		return nil, err
 	}
 
+	return buildUpdateTargets(containers, digests), nil
+}
+
+func buildUpdateTargets(containers []Container, digests map[string]string) []registry.Image {
 	seen := make(map[string]bool, len(containers))
 	targets := make([]registry.Image, 0, len(containers))
 	for _, c := range containers {
@@ -40,10 +44,23 @@ func UpdateTargets(containers []Container) ([]registry.Image, error) {
 		seen[ref] = true
 		targets = append(targets, registry.Image{
 			Ref:         ref,
-			LocalDigest: digests[ref],
+			LocalDigest: digests[canonicalRef(ref)],
 		})
 	}
-	return targets, nil
+	return targets
+}
+
+// canonicalRef normalises an image reference so that the string a container
+// was started with and the short form Docker records in RepoTags key the same
+// digest: compose's `image: postgres` becomes RepoTags "postgres:latest", and
+// "docker.io/library/nginx:alpine" becomes "nginx:alpine". Unparseable input
+// is returned trimmed so it still keys consistently on both sides.
+func canonicalRef(image string) string {
+	ref, err := registry.ParseReference(image)
+	if err != nil {
+		return strings.TrimSpace(image)
+	}
+	return ref.String()
 }
 
 // imageDigests maps an image reference to its local registry digest.
@@ -72,18 +89,37 @@ func imageDigests() (map[string]string, error) {
 	if err := json.Unmarshal(body, &images); err != nil {
 		return nil, fmt.Errorf("docker images parse: %w", err)
 	}
+	return parseImageDigests(images), nil
+}
 
+// parseImageDigests maps each canonical tag to the registry digest recorded
+// for it. An image pushed to two registries carries two RepoDigests entries
+// whose digests can legitimately differ, so the entry is matched to the tag
+// by repository rather than taking the first one.
+func parseImageDigests(images []dockerImage) map[string]string {
 	digests := make(map[string]string, len(images))
 	for _, img := range images {
-		digest := ""
-		if len(img.RepoDigests) > 0 {
-			digest = registry.DigestOf(img.RepoDigests[0])
-		}
 		for _, tag := range img.RepoTags {
-			if tag != "" && tag != "<none>:<none>" {
-				digests[tag] = digest
+			if tag == "" || tag == "<none>:<none>" {
+				continue
+			}
+			digests[canonicalRef(tag)] = digestForTag(tag, img.RepoDigests)
+		}
+	}
+	return digests
+}
+
+func digestForTag(tag string, repoDigests []string) string {
+	if len(repoDigests) == 0 {
+		return ""
+	}
+	if tagRef, err := registry.ParseReference(tag); err == nil {
+		for _, entry := range repoDigests {
+			ref, err := registry.ParseReference(entry)
+			if err == nil && ref.Registry == tagRef.Registry && ref.Repository == tagRef.Repository && ref.Digest != "" {
+				return ref.Digest
 			}
 		}
 	}
-	return digests, nil
+	return registry.DigestOf(repoDigests[0])
 }

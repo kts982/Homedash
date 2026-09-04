@@ -110,9 +110,11 @@ func (s *DockerConfigStore) Lookup(registryHost string) Credentials {
 		}
 	}
 
-	if s.cfg.CredsStore != "" {
-		return Credentials{HelperName: s.cfg.CredsStore}
-	}
+	// No auths entry means `docker login` was never run for this host, so
+	// the registry is used anonymously — even when a global credsStore is
+	// configured. Docker Desktop sets credsStore on every install; treating
+	// that as "every registry needs the helper" would disable update checks
+	// for public images on those machines.
 	return Credentials{}
 }
 

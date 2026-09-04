@@ -171,6 +171,16 @@ func (c *HTTPChecker) checkOne(ctx context.Context, img Image) Status {
 		CheckedAt:   c.now(),
 	}
 
+	// Docker replaces a container's Image with the bare image ID once the
+	// tag has been re-pulled to a newer image. That is not a name we can
+	// look up, but it is also not an error: the update is already on disk
+	// and the container simply has not been recreated yet.
+	if IsImageID(img.Ref) {
+		status.State = StateUnwatchable
+		status.Reason = "tag has moved on locally; the container runs an older image — recreate it to apply"
+		return status
+	}
+
 	ref, err := ParseReference(img.Ref)
 	if err != nil {
 		status.State = StateUnwatchable
