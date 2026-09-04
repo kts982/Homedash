@@ -10,7 +10,7 @@ HomeDash combines host metrics, Docker Compose stacks, stack summaries, containe
 
 It reads system data from `/proc`, talks directly to the Docker socket, and optionally fetches weather from [wttr.in](https://wttr.in).
 
-> Status: early-stage, Linux-only, source install for now.
+> Status: early-stage and Linux-only. Each release ships prebuilt `linux/amd64` and `linux/arm64` binaries; building from source works too.
 
 ## Who It's For
 
@@ -83,7 +83,7 @@ Current scope:
 - Linux only
 - single host only
 - Docker and Docker Compose focused
-- source install first
+- prebuilt release binaries or a source build
 
 Expect ongoing UI and feature changes while the project settles.
 
