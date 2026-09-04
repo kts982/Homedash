@@ -5,7 +5,8 @@
 # If the file does not exist, HomeDash auto-detects local mounts and falls back to /.
 # Unknown fields are rejected (catches typos).
 
-# Color theme: tokyo-night (default), catppuccin, dracula
+# Color theme: tokyo-night (default), catppuccin, dracula, nord, ember, mono
+# Each theme has a light and a dark variant, picked from the terminal background.
 theme: tokyo-night
 
 # System metrics configuration
@@ -30,3 +31,9 @@ refresh:
 # Can also be set via DOCKER_HOST environment variable (takes precedence)
 docker:
   host: unix:///var/run/docker.sock
+
+# Log viewer
+# order: newest (most recent line on top, default) or oldest (chronological).
+# Press o in a detail view to flip it for the current session.
+logs:
+  order: newest
