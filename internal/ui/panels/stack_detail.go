@@ -87,28 +87,15 @@ func RenderStackDetail(
 	}
 
 	logLines, logState := stackDetailLogLines(logs, logsErr, logFollowing, innerWidth, logOrder)
-	maxScroll := len(logLines) - logContentHeight
-	if maxScroll < 0 {
-		maxScroll = 0
+	lineCount := len(logLines)
+	if logState == detailLogStateLoaded {
+		lineCount = len(logs)
 	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	scrollOffset = clampScroll(scrollOffset, lineCount, logContentHeight)
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logOrder, logSearch)
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, lineCount, titleAvail, logFollowing, logOrder, logSearch)
 
-	endIdx := scrollOffset + logContentHeight
-	if endIdx > len(logLines) {
-		endIdx = len(logLines)
-	}
-	visible := logLines[scrollOffset:endIdx]
-	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth, logOrder, len(logLines))
-	for len(visible) < logContentHeight {
-		visible = append(visible, "")
-	}
+	visible := visibleLogRows(logs, logLines, logState, scrollOffset, logContentHeight, innerWidth, logOrder, logSearch, true)
 	logPanel := components.Panel(logTitleLeft, strings.Join(visible, "\n"), width, logPanelHeight, true)
 
 	actionBar := renderStackDetailActionBar(stack, confirmAction, actionResult, width, logFollowing, logSearch)
@@ -293,14 +280,9 @@ func stackDetailLogLines(logs []string, logsErr error, logFollowing bool, innerW
 			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Docker returned no log lines for this stack."),
 		}, detailLogStateEmpty
 	default:
-		rendered := make([]string, 0, len(logs))
-		for _, line := range logs {
-			rendered = append(rendered, formatLogLine(line, innerWidth))
-		}
-		if order == LogOrderNewest {
-			reverseLines(rendered)
-		}
-		return rendered, detailLogStateLoaded
+		// Loaded: rows are formatted on demand by renderLogWindow, which
+		// also applies the order and the "[container] " source prefix.
+		return nil, detailLogStateLoaded
 	}
 }
 

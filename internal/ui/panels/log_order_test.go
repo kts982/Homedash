@@ -2,8 +2,12 @@ package panels
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
+	"github.com/kts982/homedash/internal/ui/styles"
 )
 
 func TestLogOrderRenderIndexIsSelfInverse(t *testing.T) {
@@ -42,13 +46,10 @@ func indexOfLine(lines []string, want string) int {
 	return -1
 }
 
-func TestDetailLogLinesRespectsOrder(t *testing.T) {
+func TestRenderLogWindowRespectsOrder(t *testing.T) {
 	logs := []string{"oldest", "middle", "newest"}
 
-	newest, state := detailLogLines(logs, nil, false, 80, LogOrderNewest)
-	if state != detailLogStateLoaded {
-		t.Fatalf("state = %v, want loaded", state)
-	}
+	newest := renderLogWindow(logs, 0, 10, 80, LogOrderNewest, LogSearch{}, false)
 	if got := indexOfLine(newest, "newest"); got != 0 {
 		t.Errorf("newest-first: %q at row %d, want row 0\nrendered: %v", "newest", got, newest)
 	}
@@ -56,7 +57,7 @@ func TestDetailLogLinesRespectsOrder(t *testing.T) {
 		t.Errorf("newest-first: %q at row %d, want row 2", "oldest", got)
 	}
 
-	oldest, _ := detailLogLines(logs, nil, false, 80, LogOrderOldest)
+	oldest := renderLogWindow(logs, 0, 10, 80, LogOrderOldest, LogSearch{}, false)
 	if got := indexOfLine(oldest, "oldest"); got != 0 {
 		t.Errorf("oldest-first: %q at row %d, want row 0", "oldest", got)
 	}
@@ -65,20 +66,55 @@ func TestDetailLogLinesRespectsOrder(t *testing.T) {
 	}
 }
 
-func TestStackDetailLogLinesRespectsOrder(t *testing.T) {
-	logs := []string{"first", "second", "third"}
-
-	newest, state := stackDetailLogLines(logs, nil, false, 80, LogOrderNewest)
-	if state != detailLogStateLoaded {
-		t.Fatalf("state = %v, want loaded", state)
-	}
-	if got := indexOfLine(newest, "third"); got != 0 {
-		t.Errorf("newest-first: %q at row %d, want row 0", "third", got)
+// The loaded state defers formatting to renderLogWindow so that only the
+// visible rows are rendered per frame.
+func TestLoadedStateFormatsOnlyTheVisibleWindow(t *testing.T) {
+	logs := make([]string, 1000)
+	for i := range logs {
+		logs[i] = fmt.Sprintf("line-%d", i)
 	}
 
-	oldest, _ := stackDetailLogLines(logs, nil, false, 80, LogOrderOldest)
-	if got := indexOfLine(oldest, "first"); got != 0 {
-		t.Errorf("oldest-first: %q at row %d, want row 0", "first", got)
+	lines, state := detailLogLines(logs, nil, false, 80, LogOrderNewest)
+	if state != detailLogStateLoaded || lines != nil {
+		t.Fatalf("detailLogLines(loaded) = %d lines, state %v; want nil lines and loaded", len(lines), state)
+	}
+	lines, state = stackDetailLogLines(logs, nil, false, 80, LogOrderNewest)
+	if state != detailLogStateLoaded || lines != nil {
+		t.Fatalf("stackDetailLogLines(loaded) = %d lines, state %v; want nil lines and loaded", len(lines), state)
+	}
+
+	rows := renderLogWindow(logs, 5, 3, 80, LogOrderNewest, LogSearch{}, false)
+	if len(rows) != 3 {
+		t.Fatalf("len(rows) = %d, want 3", len(rows))
+	}
+	// Render row 5 under newest-first is storage index 999-5.
+	if got := indexOfLine(rows, "line-994"); got != 0 {
+		t.Errorf("row 0 = %q, want line-994", rows[0])
+	}
+	if got := indexOfLine(rows, "line-992"); got != 2 {
+		t.Errorf("row 2 = %q, want line-992", rows[2])
+	}
+}
+
+// A "[LEVEL]" prefix is a log level for a single container, and only a
+// source name in the merged stack view.
+func TestSourcePrefixOnlySplitsInStackView(t *testing.T) {
+	line := "2024-03-03T12:00:01Z [ERROR] db down"
+	single := formatLogLine(line, 80, logLineStyle{})
+	// Stack lines carry the container name first; the level follows it.
+	stack := formatLogLine("2024-03-03T12:00:01Z [web] [ERROR] db down", 80, logLineStyle{withSource: true})
+	plainError := formatLogLine("2024-03-03T12:00:01Z ERROR db down", 80, logLineStyle{})
+
+	errorColour := lipgloss.NewStyle().Foreground(styles.Error).Render("x")
+	errorSGR := errorColour[:strings.Index(errorColour, "m")+1]
+	if !strings.Contains(plainError, errorSGR) {
+		t.Skip("renderer emits no colour in this environment")
+	}
+	if !strings.Contains(single, errorSGR) {
+		t.Errorf("single-container [ERROR] line lost its level colour: %q", single)
+	}
+	if !strings.Contains(stack, errorSGR) {
+		t.Errorf("stack line with [ERROR] after the source lost its level colour: %q", stack)
 	}
 }
 
@@ -123,11 +159,16 @@ func TestLogOrderStringAppearsInTitle(t *testing.T) {
 }
 
 // MatchSet is keyed by storage index, so under newest-first the highlight has
-// to be mapped back or it lands on the wrong row.
-func TestHighlightSearchLinesMapsThroughOrder(t *testing.T) {
-	const total = 3
-	// Storage index 2 ("newest") matches. Under newest-first it renders at
-	// row 0, so row 0 is what must be highlighted.
+// to be mapped back or it lands on the wrong row. And the highlight must sit
+// on the matched text itself: wrapping a pre-styled row in a background
+// style used to stop at the timestamp's reset and miss the message.
+func TestSearchHighlightCoversMatchedText(t *testing.T) {
+	logs := []string{
+		"2024-03-03T12:00:01Z hello world",
+		"2024-03-03T12:00:02Z other",
+		"2024-03-03T12:00:03Z newest hello",
+	}
+	// Storage index 2 matches. Under newest-first it renders at row 0.
 	search := LogSearch{
 		Query:       "newest",
 		MatchSet:    map[int]bool{2: true},
@@ -136,21 +177,33 @@ func TestHighlightSearchLinesMapsThroughOrder(t *testing.T) {
 		Current:     1,
 	}
 
-	visible := []string{"row0", "row1", "row2"}
-	highlightSearchLines(visible, 0, search, 40, LogOrderNewest, total)
-	if visible[0] == "row0" {
-		t.Error("newest-first: row 0 was not highlighted, but holds the matching line")
+	plain := renderLogWindow(logs, 0, 3, 60, LogOrderNewest, LogSearch{}, false)
+	rows := renderLogWindow(logs, 0, 3, 60, LogOrderNewest, search, false)
+	if rows[0] == plain[0] {
+		t.Error("newest-first: row 0 holds the matching line but was not highlighted")
 	}
-	if visible[2] != "row2" {
-		t.Error("newest-first: row 2 was highlighted, but does not hold the matching line")
+	if rows[2] != plain[2] {
+		t.Error("newest-first: row 2 was highlighted but does not hold the matching line")
 	}
 
-	visible = []string{"row0", "row1", "row2"}
-	highlightSearchLines(visible, 0, search, 40, LogOrderOldest, total)
-	if visible[2] == "row2" {
-		t.Error("oldest-first: row 2 was not highlighted, but holds the matching line")
+	idx := strings.Index(rows[0], "newest hello")
+	if idx < 0 {
+		t.Fatalf("match text missing from highlighted row: %q", rows[0])
 	}
-	if visible[0] != "row0" {
-		t.Error("oldest-first: row 0 was highlighted, but does not hold the matching line")
+	segment := rows[0][:idx]
+	if i := strings.LastIndex(segment, "\x1b[m"); i >= 0 {
+		segment = segment[i+3:]
+	}
+	if !strings.Contains(segment, "48;") {
+		t.Errorf("no background (SGR 48) set immediately before the matched text; row = %q", rows[0])
+	}
+
+	plainOld := renderLogWindow(logs, 0, 3, 60, LogOrderOldest, LogSearch{}, false)
+	rowsOld := renderLogWindow(logs, 0, 3, 60, LogOrderOldest, search, false)
+	if rowsOld[2] == plainOld[2] {
+		t.Error("oldest-first: row 2 holds the matching line but was not highlighted")
+	}
+	if rowsOld[0] != plainOld[0] {
+		t.Error("oldest-first: row 0 was highlighted but does not hold the matching line")
 	}
 }

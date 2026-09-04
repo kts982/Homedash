@@ -501,31 +501,15 @@ func RenderDetail(
 	}
 
 	logLines, logState := detailLogLines(logs, logsErr, logFollowing, innerWidth, logOrder)
+	lineCount := len(logLines)
+	if logState == detailLogStateLoaded {
+		lineCount = len(logs)
+	}
+	scrollOffset = clampScroll(scrollOffset, lineCount, logContentHeight)
 
-	// Clamp scroll offset
-	maxScroll := len(logLines) - logContentHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, lineCount, titleAvail, logFollowing, logOrder, logSearch)
 
-	logTitleLeft := renderLogTitle(logState, scrollOffset, logContentHeight, len(logLines), titleAvail, logFollowing, logOrder, logSearch)
-
-	// Slice visible log lines
-	endIdx := scrollOffset + logContentHeight
-	if endIdx > len(logLines) {
-		endIdx = len(logLines)
-	}
-	visible := logLines[scrollOffset:endIdx]
-	highlightSearchLines(visible, scrollOffset, logSearch, innerWidth, logOrder, len(logLines))
-	for len(visible) < logContentHeight {
-		visible = append(visible, "")
-	}
+	visible := visibleLogRows(logs, logLines, logState, scrollOffset, logContentHeight, innerWidth, logOrder, logSearch, false)
 
 	logContent := strings.Join(visible, "\n")
 	logPanel := components.Panel(logTitleLeft, logContent, width, logPanelHeight, true)
@@ -599,10 +583,97 @@ func renderDetailActionBar(c *collector.Container, confirmAction, actionResult s
 		Render(content)
 }
 
+// logLineStyle carries the per-row rendering choices for formatLogLine.
+type logLineStyle struct {
+	// withSource treats a leading "[name] " as the container a stack log
+	// line came from. Only stack views set it: a single container's own
+	// "[ERROR] ..." prefix is a log level, not a source.
+	withSource bool
+	// highlight paints a search match. Every segment carries the background
+	// itself, because wrapping an already-styled row in a background style
+	// stops at the first inner reset and misses the matched text.
+	highlight logHighlight
+}
+
+// logHighlight is the colour pair for a search-match row; the zero value
+// means no highlight. fg, when set, overrides every segment's foreground.
+type logHighlight struct {
+	bg, fg color.Color
+}
+
+// searchHighlight picks the highlight for the log line at storage index idx.
+// Colours come from the theme so the highlight survives light variants; the
+// current match inverts onto the primary colour to stand apart from the rest.
+func searchHighlight(idx int, search LogSearch) logHighlight {
+	if search.Query == "" || !search.MatchSet[idx] {
+		return logHighlight{}
+	}
+	if idx == search.CurrentLine {
+		return logHighlight{bg: styles.Primary, fg: styles.TextInverse}
+	}
+	return logHighlight{bg: styles.BgFocus}
+}
+
+// renderLogWindow formats only the rows that fit on screen. logs is in
+// storage order (oldest first); scrollOffset counts rows in render order, so
+// under LogOrderNewest row r shows storage index n-1-r. Formatting per row
+// rather than per buffer keeps a 1000-line follow session from re-rendering
+// every line for every incoming message.
+func renderLogWindow(logs []string, scrollOffset, height, width int, order LogOrder, search LogSearch, withSource bool) []string {
+	n := len(logs)
+	scrollOffset = max(scrollOffset, 0)
+	end := min(scrollOffset+height, n)
+	rows := make([]string, 0, max(height, 0))
+	for row := scrollOffset; row < end; row++ {
+		idx := order.RenderIndex(row, n)
+		rows = append(rows, formatLogLine(logs[idx], width, logLineStyle{
+			withSource: withSource,
+			highlight:  searchHighlight(idx, search),
+		}))
+	}
+	return rows
+}
+
+// clampScroll keeps a scroll offset within [0, lineCount-height].
+func clampScroll(offset, lineCount, height int) int {
+	return min(max(offset, 0), max(0, lineCount-height))
+}
+
+// visibleLogRows returns exactly height rows for the log panel: formatted log
+// lines for the loaded state, the placeholder prose otherwise, padded with
+// blanks.
+func visibleLogRows(logs, placeholder []string, state detailLogState, scrollOffset, height, width int, order LogOrder, search LogSearch, withSource bool) []string {
+	var rows []string
+	if state == detailLogStateLoaded {
+		rows = renderLogWindow(logs, scrollOffset, height, width, order, search, withSource)
+	} else {
+		end := min(scrollOffset+height, len(placeholder))
+		rows = append(rows, placeholder[min(max(scrollOffset, 0), end):end]...)
+	}
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
 // formatLogLine parses Docker timestamps and colorizes log levels.
-func formatLogLine(line string, maxWidth int) string {
-	timeStyle := lipgloss.NewStyle().Foreground(styles.TextMuted)
-	msgStyle := lipgloss.NewStyle().Foreground(styles.TextSecondary)
+func formatLogLine(line string, maxWidth int, opts logLineStyle) string {
+	base := lipgloss.NewStyle()
+	if opts.highlight.bg != nil {
+		base = base.Background(opts.highlight.bg)
+	}
+	fg := func(c color.Color) lipgloss.Style {
+		if opts.highlight.fg != nil {
+			c = opts.highlight.fg
+		}
+		return base.Foreground(c)
+	}
+	sep := " "
+	if opts.highlight.bg != nil {
+		sep = base.Render(" ")
+	}
+	timeStyle := fg(styles.TextMuted)
+	msgStyle := fg(styles.TextSecondary)
 
 	var ts, msg string
 
@@ -622,35 +693,42 @@ func formatLogLine(line string, maxWidth int) string {
 	}
 
 	source := ""
-	if prefixedSource, rest, ok := splitLogSourcePrefix(msg); ok {
-		source = prefixedSource
-		msg = rest
+	if opts.withSource {
+		if prefixedSource, rest, ok := splitLogSourcePrefix(msg); ok {
+			source = prefixedSource
+			msg = rest
+		}
 	}
 
 	// Detect log level and pick color for the message
 	levelColor := detectLogLevel(msg)
 	if levelColor != nil {
-		msgStyle = lipgloss.NewStyle().Foreground(levelColor)
+		msgStyle = fg(levelColor)
 	}
 
 	msgRendered := msgStyle.Render(msg)
 	if source != "" {
-		sourceStyle := lipgloss.NewStyle().Foreground(stackLogSourceColor(source)).Bold(true)
+		sourceStyle := fg(stackLogSourceColor(source)).Bold(true)
 		if msg == "" {
 			msgRendered = sourceStyle.Render("[" + source + "]")
 		} else {
-			msgRendered = sourceStyle.Render("["+source+"]") + " " + msgRendered
+			msgRendered = sourceStyle.Render("["+source+"]") + sep + msgRendered
 		}
 	}
 
 	var rendered string
 	if ts != "" {
-		rendered = timeStyle.Render(ts) + " " + msgRendered
+		rendered = timeStyle.Render(ts) + sep + msgRendered
 	} else {
 		rendered = msgRendered
 	}
 
-	return lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+	out := lipgloss.NewStyle().Inline(true).MaxWidth(maxWidth).Render(rendered)
+	if opts.highlight.bg != nil {
+		// Pad so the highlight spans the whole row, not just the text.
+		out = base.Inline(true).Width(maxWidth).Render(out)
+	}
+	return out
 }
 
 func splitLogSourcePrefix(msg string) (string, string, bool) {
@@ -710,13 +788,6 @@ func (o LogOrder) RenderIndex(storageIndex, n int) int {
 	return n - 1 - storageIndex
 }
 
-// reverseLines flips a slice of rendered lines in place.
-func reverseLines(lines []string) {
-	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
-		lines[i], lines[j] = lines[j], lines[i]
-	}
-}
-
 type detailLogState int
 
 const (
@@ -756,14 +827,9 @@ func detailLogLines(logs []string, logsErr error, logFollowing bool, innerWidth 
 			lipgloss.NewStyle().Foreground(styles.TextSecondary).Render("Docker returned no log lines for this container."),
 		}, detailLogStateEmpty
 	default:
-		rendered := make([]string, 0, len(logs))
-		for _, line := range logs {
-			rendered = append(rendered, formatLogLine(line, innerWidth))
-		}
-		if order == LogOrderNewest {
-			reverseLines(rendered)
-		}
-		return rendered, detailLogStateLoaded
+		// Loaded: rows are formatted on demand by renderLogWindow, which
+		// also applies the order.
+		return nil, detailLogStateLoaded
 	}
 }
 
@@ -845,29 +911,6 @@ type LogSearch struct {
 	CurrentLine int          // raw log line index of current match, -1 = none
 	Total       int
 	Current     int // 1-based index into matches
-}
-
-// highlightSearchLines paints match backgrounds onto the visible rows.
-// logSearch.MatchSet is keyed by storage index, so under LogOrderNewest the
-// on-screen row must be mapped back through order.RenderIndex (which is
-// self-inverse) before the lookup. total is the full rendered line count.
-func highlightSearchLines(visible []string, scrollOffset int, logSearch LogSearch, width int, order LogOrder, total int) {
-	if logSearch.Query == "" || len(logSearch.MatchSet) == 0 {
-		return
-	}
-	matchBg := lipgloss.Color("#3a3000")
-	currentBg := lipgloss.Color("#5a4a00")
-	for i := range visible {
-		origIdx := order.RenderIndex(scrollOffset+i, total)
-		if !logSearch.MatchSet[origIdx] {
-			continue
-		}
-		bg := matchBg
-		if origIdx == logSearch.CurrentLine {
-			bg = currentBg
-		}
-		visible[i] = lipgloss.NewStyle().Background(bg).Width(width).Inline(true).Render(visible[i])
-	}
 }
 
 func detectLogLevel(msg string) color.Color {
