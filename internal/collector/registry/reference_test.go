@@ -27,6 +27,13 @@ func TestParseReference(t *testing.T) {
 		{"host with port", "localhost:5000/myapp:dev", "localhost:5000", "myapp", "dev", "", false},
 		{"host with port, no tag", "registry.local:5000/team/app", "registry.local:5000", "team/app", "latest", "", false},
 
+		// Docker Hub spelled out explicitly. All three hostnames are the same
+		// registry, and the library/ rule still applies.
+		{"docker.io explicit", "docker.io/library/nginx:alpine", defaultRegistry, "library/nginx", "alpine", "", false},
+		{"docker.io single segment", "docker.io/nginx", defaultRegistry, "library/nginx", "latest", "", false},
+		{"docker.io namespace", "docker.io/adguard/adguardhome", defaultRegistry, "adguard/adguardhome", "latest", "", false},
+		{"index.docker.io", "index.docker.io/nginx:alpine", defaultRegistry, "library/nginx", "alpine", "", false},
+
 		// Locally-built images with no registry component.
 		{"local build", "caddy-hetzner:local", defaultRegistry, "library/caddy-hetzner", "local", "", false},
 
@@ -143,5 +150,23 @@ func TestParseChallenge(t *testing.T) {
 				t.Errorf("Service = %q, want %q", ch.Service, tt.wantService)
 			}
 		})
+	}
+}
+
+func TestIsImageID(t *testing.T) {
+	id := "753eeb0cc22a0000000000000000000000000000000000000000000000000000"
+	tests := map[string]bool{
+		"sha256:" + id:             true,
+		id:                         true,
+		" sha256:" + id + " ":      true,
+		"nginx:alpine":             false,
+		"sha256:abc":               false,
+		"sha256:" + id[:63] + "G":  false,
+		"ghcr.io/x/y@sha256:" + id: false,
+	}
+	for in, want := range tests {
+		if got := IsImageID(in); got != want {
+			t.Errorf("IsImageID(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
