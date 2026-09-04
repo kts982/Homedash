@@ -27,6 +27,8 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      # Optional conventional-commit scope, so "chore(deps): ..." from
+      # Dependabot is excluded along with plain "chore: ...".
+      - '^docs(\(.*\))?:'
+      - '^test(\(.*\))?:'
+      - '^chore(\(.*\))?:'
