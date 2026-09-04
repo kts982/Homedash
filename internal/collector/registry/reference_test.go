@@ -21,7 +21,7 @@ func TestParseReference(t *testing.T) {
 		// Explicit registries — the first segment is a host only if it has a
 		// dot or colon, which is what separates these from the cases above.
 		{"ghcr", "ghcr.io/gethomepage/homepage:latest", "ghcr.io", "gethomepage/homepage", "latest", "", false},
-		{"deep path", "git.example.de/acme/mcp-docs:abap", "git.example.de", "acme/mcp-docs", "abap", "", false},
+		{"deep path", "git.example.de/team/mcp-docs:abap", "git.example.de", "team/mcp-docs", "abap", "", false},
 		{"forgejo code host", "code.forgejo.org/forgejo/runner:12", "code.forgejo.org", "forgejo/runner", "12", "", false},
 		{"localhost is a host", "localhost/myapp:dev", "localhost", "myapp", "dev", "", false},
 		{"host with port", "localhost:5000/myapp:dev", "localhost:5000", "myapp", "dev", "", false},
