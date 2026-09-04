@@ -6,7 +6,7 @@ Thanks for your interest in contributing! HomeDash is a terminal dashboard for h
 
 ### Prerequisites
 
-- **Go 1.25+**
+- **Go 1.26+**
 - **Linux** (reads from `/proc` for system metrics)
 - **Docker** socket accessible at `/var/run/docker.sock` (or set `DOCKER_HOST`)
 
@@ -30,12 +30,13 @@ go test -race ./...
 
 ```
 cmd/homedash/           Entry point
-internal/collector/     Data collection (system, docker, weather) — no TUI deps
-internal/config/        YAML config loader
+internal/collector/     Data collection (system, docker, weather, image list) — no TUI deps
+  registry/             Image update checks against OCI registries (digest lookups, auth)
+internal/config/        YAML config loader and writer
 internal/state/         Persistent UI state (collapsed stacks)
-internal/ui/            Bubble Tea UI layer
-  components/           Reusable primitives (gauge, sparkline, panel, ring buffer)
-  panels/               Dashboard sections (system, containers, detail, weather, help)
+internal/ui/            Bubble Tea UI layer (model, keys, commands, options dialog)
+  components/           Reusable primitives (gauge, sparkline with ring buffer, panel)
+  panels/               Screen sections (system, containers, detail, stack detail, preview, header, help, update command)
   styles/               Theme palettes
 ```
 
@@ -43,7 +44,7 @@ internal/ui/            Bubble Tea UI layer
 
 - Standard Go formatting (`gofmt`)
 - No external dependencies for data collection — raw `/proc` parsing, Docker unix socket HTTP, wttr.in JSON
-- All data collection is tick-driven through Bubble Tea commands — no background goroutines or channels
+- Data collection runs inside Bubble Tea commands. Goroutines are either request-scoped (the stats worker pool finishes before its command returns) or tied to a `context` the UI cancels when the view closes (log follow streams). Do not add free-running background loops
 - Keep UI rendering and data collection cleanly separated (collector package has no TUI deps)
 
 ## Submitting Changes

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 type stateFile struct {
@@ -60,6 +61,7 @@ func Save(collapsed map[string]bool) error {
 			names = append(names, name)
 		}
 	}
+	sort.Strings(names)
 
 	sf := stateFile{CollapsedStacks: names}
 	data, err := json.Marshal(sf)
@@ -67,9 +69,30 @@ func Save(collapsed map[string]bool) error {
 		return err
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	// A unique temp name keeps two HomeDash instances (tmux panes are
+	// normal for this audience) from interleaving writes into one file and
+	// renaming a truncated result into place.
+	tmp, err := os.CreateTemp(dir, ".state-*.json.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }

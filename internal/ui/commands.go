@@ -1,32 +1,43 @@
 package ui
 
 import (
+	"context"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 	"github.com/kts982/homedash/internal/state"
 )
+
+// updateCheckTimeout bounds a whole update sweep. Generous, because it covers
+// every image across every registry, but finite so a hung registry cannot
+// leave the check spinning forever.
+const updateCheckTimeout = 90 * time.Second
 
 type stackActionTarget struct {
 	ID   string
 	Name string
 }
 
-func collectSystemCmd(disks []config.Disk) tea.Msg {
+// oneShot is the Epoch of a collection no tick chain asked for. Model epochs
+// start at 1, so it never matches a live chain.
+const oneShot uint64 = 0
+
+func collectSystemCmd(disks []config.Disk, epoch uint64) tea.Msg {
 	data, err := collector.CollectSystem(disks)
-	return SystemDataMsg{Data: data, Err: err}
+	return SystemDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
-func collectDockerCmd() tea.Msg {
+func collectDockerCmd(epoch uint64) tea.Msg {
 	data, err := collector.CollectDocker()
-	return DockerDataMsg{Data: data, Err: err}
+	return DockerDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
-func collectWeatherCmd() tea.Msg {
+func collectWeatherCmd(epoch uint64) tea.Msg {
 	data, err := collector.CollectWeather()
-	return WeatherDataMsg{Data: data, Err: err}
+	return WeatherDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
 func systemTickCmd(disks []config.Disk, interval time.Duration, epoch uint64) tea.Cmd {
@@ -135,12 +146,14 @@ func clearActionResultCmd() tea.Cmd {
 	})
 }
 
-// logFollowCmd reads the next line from the follow channel.
-func logFollowCmd(ch <-chan string, seq uint64) tea.Cmd {
+// logFollowCmd reads the next line from the follow channel. When the channel
+// closes, the stream's terminal error (nil for EOF or cancellation) is
+// waiting on errCh: the producer sends it before closing ch.
+func logFollowCmd(ch <-chan string, errCh <-chan error, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
 		if !ok {
-			return LogFollowLineMsg{Done: true, Seq: seq}
+			return LogFollowLineMsg{Done: true, Err: <-errCh, Seq: seq}
 		}
 		return LogFollowLineMsg{Line: line, Seq: seq}
 	}
@@ -176,4 +189,30 @@ func dismissNotificationCmd(id uint64) tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return DismissNotificationMsg{ID: id}
 	})
+}
+
+// checkUpdatesCmd queries each running container's registry for a newer
+// manifest digest.
+//
+// Deliberately manual rather than tied to the refresh tick: the Docker
+// refresh interval defaults to 5s, and hitting five registries at that rate
+// is both rude and liable to trip anonymous rate limits. The containers
+// slice is cloned because this runs on its own goroutine.
+func checkUpdatesCmd(containers []collector.Container) tea.Cmd {
+	snapshot := append([]collector.Container(nil), containers...)
+
+	return func() tea.Msg {
+		targets, err := collector.UpdateTargets(snapshot)
+		if err != nil {
+			return UpdateCheckMsg{Err: err}
+		}
+		if len(targets) == 0 {
+			return UpdateCheckMsg{}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
+		defer cancel()
+
+		return UpdateCheckMsg{Statuses: registry.NewHTTPChecker().Check(ctx, targets)}
+	}
 }

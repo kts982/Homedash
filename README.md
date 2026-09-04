@@ -1,7 +1,7 @@
 # HomeDash
 
 [![CI](https://github.com/kts982/Homedash/actions/workflows/ci.yml/badge.svg)](https://github.com/kts982/Homedash/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A terminal dashboard for single-host Linux homelabs.
@@ -69,7 +69,10 @@ Persistent recent events and problem history stay visible without leaving the ma
 - **Weather** - current conditions via [wttr.in](https://wttr.in), shown in the header bar with responsive degradation
 - **Responsive layout** - works across narrow and wide terminals
 - **State persistence** - collapsed stack groups are remembered across sessions at `~/.config/homedash/state.json`
-- **Themes, options, and mouse support** - Tokyo Night, Catppuccin, Dracula, an in-app options dialog for theme, disk, refresh, and Docker settings, plus click and scroll navigation
+- **Image update checks** - `u` asks each image's registry whether the tag you are running now points at a different manifest digest, marking stale containers with `⬆`. Works across Docker Hub, ghcr.io, and private registries using your existing `~/.docker` credentials. Locally-built images are reported as untracked rather than as errors. Manual by design — never on the refresh tick, so registries are not polled every few seconds
+- **Compose-aware update commands** - for a container with a pending update, the detail view builds the exact `docker compose -p <project> -f <files> [--env-file <files>] up -d --pull always <service>` command from the container's own labels, with `c` to copy it. HomeDash shows the command rather than running it, so there is no dependency on the docker CLI
+- **Log order** - logs render newest-first by default, with `o` to switch to chronological
+- **Themes, options, and mouse support** - Tokyo Night, Catppuccin, Dracula, Nord, Ember, and Monochrome, each with light and dark variants selected automatically from the terminal background, an in-app options dialog for theme, disk, refresh, and Docker settings, plus click and scroll navigation
 
 ## Status
 
@@ -100,14 +103,17 @@ Not planned:
 
 ### From source
 
-Requires [Go 1.25+](https://go.dev/dl/) and Linux.
+Requires [Go 1.26+](https://go.dev/dl/) and Linux.
 
 ```bash
 git clone https://github.com/kts982/Homedash.git
 cd Homedash
 make build
+./homedash --version
 ./homedash
 ```
+
+Tagged releases also ship prebuilt `linux/amd64` and `linux/arm64` archives on the [Releases](https://github.com/kts982/Homedash/releases) page.
 
 ### Development
 
@@ -121,7 +127,7 @@ make lint
 ### Requirements
 
 - **Linux** (reads from `/proc`)
-- **Docker socket** accessible at `/var/run/docker.sock` (no sudo needed if your user is in the `docker` group)
+- **Docker Engine 27.1 or newer** (HomeDash speaks API v1.47) with the socket accessible at `/var/run/docker.sock` (no sudo needed if your user is in the `docker` group)
 - **Optional**: Internet access for weather via [wttr.in](https://wttr.in)
 
 ## Configuration
@@ -138,7 +144,7 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `theme` | string | `tokyo-night` | Color theme: `tokyo-night`, `catppuccin`, `dracula` |
+| `theme` | string | `tokyo-night` | Color theme: `tokyo-night`, `catppuccin`, `dracula`, `nord`, `ember`, `mono`. Each has matching light and dark variants, selected automatically from the terminal background. An unrecognised name warns and falls back to `tokyo-night` rather than failing startup. |
 | `system.disks` | list | auto-detected local mounts, with `/` fallback | Disk mount points to monitor |
 | `system.disks[].path` | string | required | Absolute path to mount point |
 | `system.disks[].label` | string | same as path | Display label |
@@ -146,6 +152,7 @@ See [`config.example.yaml`](config.example.yaml) for a full annotated example.
 | `refresh.docker` | duration | `5s` | Docker stats refresh interval (min: `3s`) |
 | `refresh.weather` | duration | `5m` | Weather refresh interval (min: `1m`) |
 | `docker.host` | string | `unix:///var/run/docker.sock` | Docker daemon socket |
+| `logs.order` | string | `newest` | Log line order: `newest` (most recent on top) or `oldest` (chronological). Toggle per-session with `o` in the detail view. An unrecognised value warns and falls back to `newest` rather than failing startup. |
 
 The Docker host can also be set via the `DOCKER_HOST` environment variable, which takes precedence over the config file.
 
@@ -191,15 +198,17 @@ HomeDash saves UI state (collapsed stack groups) to `~/.config/homedash/state.js
 | `enter` | Expand/collapse selected stack, or open selected container detail |
 | `l` | Open logs for the selected container or stack |
 | `o` | Cycle dashboard sort mode (`default`, `cpu`, `mem`, `unhealthy`) |
+| `u` | Check registries for image updates (manual — never runs on the refresh tick) |
 | `space` | Open quick-action menu for selected container or stack |
 | `/` | Search / filter containers |
+| `esc` | Clear the active filter |
 | `s` | Stop selected container or stack (with confirmation) |
 | `S` | Start selected container or stack (with confirmation) |
 | `R` | Restart selected container or stack (with confirmation) |
 | `r` | Force refresh all data |
 | `q` / `ctrl+c` | Quit |
 
-Container filtering supports plain text plus field tokens like `state:running`, `health:unhealthy`, `stack:infra`, and `image:nginx`.
+Container filtering supports plain text plus field tokens like `state:running`, `health:unhealthy`, `stack:infra`, and `image:nginx`. `state:` and `health:` match exactly (`health:none` selects containers without a healthcheck); `stack:`, `image:` and free text match substrings.
 
 ### Detail View
 
@@ -210,6 +219,8 @@ Container filtering supports plain text plus field tokens like `state:running`, 
 | `ctrl+u` / `ctrl+d` or `PgUp` / `PgDn` | Scroll by half page |
 | `g` / `G` | Jump to top / bottom of logs |
 | `f` | Toggle log follow mode (live streaming) |
+| `o` | Toggle log order (newest-first / oldest-first) |
+| `c` | Copy the compose command that applies a pending image update |
 | `/` | Search logs (substring highlight) |
 | `n` / `N` | Jump to next / previous search match |
 | `l` | Refresh logs |
@@ -244,12 +255,13 @@ Containers are grouped by the `com.docker.compose.project` label, so any compose
 
 ```
 cmd/homedash/           Entry point
-internal/collector/     Data collection (system, docker, weather)
-internal/config/        YAML config loader
+internal/collector/     Data collection (system, docker, weather, image list)
+  registry/             Image update checks against OCI registries
+internal/config/        YAML config loader and writer
 internal/state/         Persistent UI state
-internal/ui/            Bubble Tea UI layer
+internal/ui/            Bubble Tea UI layer (model, keys, commands, options dialog)
   components/           Reusable primitives (gauge, sparkline, panel)
-  panels/               Screen sections (system, containers, detail, header, help)
+  panels/               Screen sections (system, containers, detail, stack detail, preview, header, help)
   styles/               Theme palettes
 ```
 

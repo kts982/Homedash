@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
 	"github.com/kts982/homedash/internal/state"
+	"github.com/kts982/homedash/internal/ui/panels"
 )
 
 type Panel int
@@ -323,7 +324,7 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 			m.ensureVisible()
 		}
 	case "enter":
-		if m.focusedPanel == PanelContainers && len(m.displayItems) > 0 {
+		if m.focusedPanel == PanelContainers && m.selectedIndex >= 0 && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
 			if item.Kind == DisplayGroup {
 				m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
@@ -353,6 +354,16 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.viewMode == ViewDashboard {
 			m.alertsOpen = !m.alertsOpen
 			m.recalcLayout()
+		}
+	case "u":
+		// Manual only. A registry sweep on the refresh tick would hammer
+		// every registry every few seconds; see checkUpdatesCmd.
+		if m.viewMode == ViewDashboard && !m.updateChecking && !m.TestMode {
+			m.updateChecking = true
+			return m, tea.Batch(
+				m.pushNotify("Checking registries for image updates...", levelInfo),
+				checkUpdatesCmd(m.dockerData.Containers),
+			)
 		}
 	case "O":
 		if m.viewMode == ViewDashboard {
@@ -414,10 +425,11 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 				func() tea.Msg { return collectMockWeatherCmd() },
 			)
 		}
+		// One-offs: the running tick chains keep their cadence.
 		return m, tea.Batch(
-			func() tea.Msg { return collectSystemCmd(m.disks) },
-			func() tea.Msg { return collectDockerCmd() },
-			func() tea.Msg { return collectWeatherCmd() },
+			func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
+			func() tea.Msg { return collectWeatherCmd(oneShot) },
 		)
 	case "/":
 		m.filtering = true
@@ -460,7 +472,10 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 			}
 		case tea.MouseWheelDown:
 			if m.focusedPanel == PanelContainers {
-				maxOffset := len(m.displayItems) - m.containerRows
+				// containerRows can be 0 on a very short terminal; without
+				// the floor scrollOffset would reach len(displayItems) and
+				// drag selectedIndex out of range.
+				maxOffset := len(m.displayItems) - max(1, m.containerRows)
 				if maxOffset < 0 {
 					maxOffset = 0
 				}
@@ -567,6 +582,9 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		case "y":
 			action := m.confirmAction
 			m.confirmAction = ""
+			// The stream is stopped only once the action is confirmed, so
+			// answering "n" leaves the live view exactly as it was.
+			m.stopFollowing()
 			if m.detailStackName != "" {
 				return m, stackActionCmd(m.dockerData.Containers, m.detailStackName, action)
 			}
@@ -603,9 +621,33 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.logFollowing {
 			m.stopFollowing()
 		} else {
-			// Jump to bottom so autoscroll engages on new lines
-			m.detailScrollOffset = detailMaxScroll(m)
+			// Park where new lines land so autoscroll engages immediately.
+			m.detailScrollOffset = m.followPinOffset()
 			return m, m.startFollowing()
+		}
+	case "c":
+		// Copy the compose command that applies a pending image update.
+		// OSC 52 is best-effort — terminals may not support it or may have
+		// it disabled over SSH — so the command is always rendered as
+		// selectable text too, and copy is a convenience, not the only path.
+		if info := m.detailUpdateInfo(); info != nil && info.Command != "" {
+			return m, tea.Batch(
+				tea.SetClipboard(info.Command),
+				m.pushNotify("Update command copied to clipboard", levelInfo),
+			)
+		}
+	case "o":
+		// Flip render order, mirroring the scroll offset so the lines the
+		// user was reading stay on screen instead of jumping to an end.
+		if mirrored := detailMaxScroll(m) - m.detailScrollOffset; mirrored > 0 {
+			m.detailScrollOffset = mirrored
+		} else {
+			m.detailScrollOffset = 0
+		}
+		if m.logOrder == panels.LogOrderNewest {
+			m.logOrder = panels.LogOrderOldest
+		} else {
+			m.logOrder = panels.LogOrderNewest
 		}
 	case "j", "down":
 		maxScroll := detailMaxScroll(m)
@@ -648,31 +690,25 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	case "s":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.RunningCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "stop"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
-			m.stopFollowing()
 			m.confirmAction = "stop"
 		}
 	case "S":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.StoppedCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "start"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State != "running" {
-			m.stopFollowing()
 			m.confirmAction = "start"
 		}
 	case "R":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.RunningCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "restart"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
-			m.stopFollowing()
 			m.confirmAction = "restart"
 		}
 	}

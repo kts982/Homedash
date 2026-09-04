@@ -84,6 +84,24 @@ func TestParseDockerLogs(t *testing.T) {
 		}
 	})
 
+	t.Run("strips escape sequences and control characters", func(t *testing.T) {
+		input := []byte("hello \x1b[2J\x1b]0;PWNED\x07 \x1b[31mred\x1b[0m\x00 tab\there\r\n")
+		want := []string{"hello  red tab\there"}
+		got := parseDockerLogs(input)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parseDockerLogs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("carriage return keeps the last overwrite", func(t *testing.T) {
+		input := append(dockerFrame(0x01, "10%\r20%\r30%\n"), dockerFrame(0x02, "\x1b[2J\n")...)
+		want := []string{"30%"} // a line that was only an escape sequence is dropped
+		got := parseDockerLogs(input)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parseDockerLogs() = %#v, want %#v", got, want)
+		}
+	})
+
 	t.Run("truncated frame payload", func(t *testing.T) {
 		frame := dockerFrame(0x01, "abcdef\n")
 		input := frame[:8+3] // header says 7 bytes, only 3 remain
@@ -581,5 +599,53 @@ func TestContainerAction(t *testing.T) {
 				t.Fatalf("ContainerAction() returned error: %v", err)
 			}
 		})
+	}
+}
+
+func TestCPUPercentComparesConsecutiveOneShotReadings(t *testing.T) {
+	cpuSamplesMu.Lock()
+	cpuSamples = map[string]containerCPUSample{}
+	cpuSamplesMu.Unlock()
+
+	reading := func(total, system uint64) *dockerStats {
+		var s dockerStats
+		s.CPUStats.CPUUsage.TotalUsage = total
+		s.CPUStats.SystemCPUUsage = system
+		s.CPUStats.OnlineCPUs = 2
+		return &s // precpu_stats stays zero, as one-shot=true returns it
+	}
+
+	if got := cpuPercent("c1", reading(58_576_000, 48_617_420_000_000)); got != 0 {
+		t.Fatalf("first reading = %v%%, want 0 (nothing to compare against)", got)
+	}
+	// 1s of container CPU over 4s of host CPU on 2 cores = 50% of one core.
+	got := cpuPercent("c1", reading(58_576_000+1_000_000_000, 48_617_420_000_000+4_000_000_000))
+	if got < 49.9 || got > 50.1 {
+		t.Fatalf("second reading = %v%%, want 50", got)
+	}
+	// Counters that went backwards (container restarted) report 0, not garbage.
+	if got := cpuPercent("c1", reading(1_000, 48_617_420_000_000+5_000_000_000)); got != 0 {
+		t.Fatalf("after counter reset = %v%%, want 0", got)
+	}
+
+	pruneCPUSamples(map[string]bool{})
+	cpuSamplesMu.Lock()
+	n := len(cpuSamples)
+	cpuSamplesMu.Unlock()
+	if n != 0 {
+		t.Fatalf("pruneCPUSamples left %d entries, want 0", n)
+	}
+}
+
+func TestCPUPercentTrustsPrecpuWhenPresent(t *testing.T) {
+	var s dockerStats
+	s.PrecpuStats.CPUUsage.TotalUsage = 1_000
+	s.PrecpuStats.SystemCPUUsage = 10_000
+	s.CPUStats.CPUUsage.TotalUsage = 1_000 + 250
+	s.CPUStats.SystemCPUUsage = 10_000 + 1_000
+	s.CPUStats.OnlineCPUs = 4
+
+	if got := cpuPercent("fresh-id", &s); got < 99.9 || got > 100.1 {
+		t.Fatalf("cpuPercent = %v%%, want 100 (25%% of 4 cores)", got)
 	}
 }

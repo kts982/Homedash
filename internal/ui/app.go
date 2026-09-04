@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 	"github.com/kts982/homedash/internal/state"
 	"github.com/kts982/homedash/internal/ui/components"
@@ -121,6 +124,12 @@ type Model struct {
 	themeName   string
 	disks       []config.Disk
 	dockerHost  string
+	// configDockerHost and configLogOrder are the values as written in the
+	// config file. They are kept apart from the runtime values so that a
+	// DOCKER_HOST override or a per-session `o` toggle is never written
+	// back to disk by the options dialog.
+	configDockerHost string
+	configLogOrder   string
 
 	cpuHistory      *components.RingBuffer
 	ramHistory      *components.RingBuffer
@@ -182,10 +191,27 @@ type Model struct {
 	logSearchMatches []int // indices into detailLogs that match
 	logSearchIndex   int   // current position in logSearchMatches
 
+	// Log render order (display only — detailLogs stays in arrival order)
+	logOrder panels.LogOrder
+
+	// Non-fatal config problems, surfaced once the UI is up
+	configWarnings []string
+
+	// Terminal background, from tea.BackgroundColorMsg. Assumed dark until
+	// the terminal reports otherwise; selects the theme's light/dark variant.
+	darkBackground bool
+
+	// Image update checks, keyed by image reference. Populated only by an
+	// explicit 'u' press — never by the refresh tick, see checkUpdatesCmd.
+	imageUpdates    map[string]registry.Status
+	updateChecking  bool
+	updateCheckedAt time.Time
+
 	// Log follow mode
 	logFollowing    bool
 	logFollowCancel context.CancelFunc
 	logFollowCh     <-chan string
+	logFollowErrCh  <-chan error
 	logFollowSeq    uint64 // session counter to discard stale messages
 
 	// Collapse persistence
@@ -215,6 +241,8 @@ type ModelOptions struct {
 	SystemRefreshInterval  time.Duration
 	DockerRefreshInterval  time.Duration
 	WeatherRefreshInterval time.Duration
+	LogOrder               string
+	ConfigWarnings         []string
 	TestMode               bool
 }
 
@@ -225,10 +253,10 @@ func NewModel(options ModelOptions) Model {
 		disks = defaults.System.Disks
 	}
 
-	dockerHost := strings.TrimSpace(options.DockerHost)
-	if dockerHost == "" {
-		dockerHost = defaults.EffectiveDockerHost()
-	}
+	// options.DockerHost is the configured value; the environment still
+	// takes precedence at runtime.
+	configDockerHost := strings.TrimSpace(options.DockerHost)
+	dockerHost := config.Config{Docker: config.DockerConfig{Host: configDockerHost}}.EffectiveDockerHost()
 
 	systemRefresh := options.SystemRefreshInterval
 	if systemRefresh <= 0 {
@@ -255,16 +283,41 @@ func NewModel(options ModelOptions) Model {
 		searchInput:            ti,
 		logSearchInput:         lsi,
 		themeName:              normalizeThemeName(options.Theme),
+		darkBackground:         true,
 		disks:                  disks,
 		dockerHost:             dockerHost,
+		configDockerHost:       configDockerHost,
+		configLogOrder:         logOrderConfigValue(logOrderFromConfig(options.LogOrder)),
 		systemRefreshInterval:  systemRefresh,
 		dockerRefreshInterval:  dockerRefresh,
 		weatherRefreshInterval: weatherRefresh,
+		logOrder:               logOrderFromConfig(options.LogOrder),
+		configWarnings:         options.ConfigWarnings,
 		diskWarned:             make(map[string]bool),
 		shownWarnings:          make(map[string]bool),
 		TestMode:               options.TestMode,
 		focused:                true,
+		// Epochs start at 1 so that oneShot (0) never matches a live chain.
+		tickEpoch: 1,
 	}
+}
+
+// logOrderConfigValue is the inverse of logOrderFromConfig.
+func logOrderConfigValue(order panels.LogOrder) string {
+	if order == panels.LogOrderOldest {
+		return config.LogOrderOldest
+	}
+	return config.LogOrderNewest
+}
+
+// logOrderFromConfig maps the config string onto the render enum. Unknown
+// values fall back to newest-first; config.Load already warns about those, so
+// this is only a safety net for direct ModelOptions construction (e.g. tests).
+func logOrderFromConfig(value string) panels.LogOrder {
+	if strings.EqualFold(strings.TrimSpace(value), config.LogOrderOldest) {
+		return panels.LogOrderOldest
+	}
+	return panels.LogOrderNewest
 }
 
 func (m Model) Init() tea.Cmd {
@@ -277,10 +330,16 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	cmds := []tea.Cmd{
-		// Initial data collection
-		func() tea.Msg { return collectSystemCmd(m.disks) },
-		func() tea.Msg { return collectDockerCmd() },
-		func() tea.Msg { return collectWeatherCmd() },
+		// Ask the terminal for its background so the theme can pick its
+		// light or dark variant. Answered via tea.BackgroundColorMsg.
+		tea.RequestBackgroundColor,
+		// Surface any non-fatal config problems found during load
+		func() tea.Msg { return configWarningsMsg{warnings: m.configWarnings} },
+		// Initial data collection. These are one-offs: the tick timers
+		// below own the refresh chains.
+		func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+		func() tea.Msg { return collectDockerCmd(oneShot) },
+		func() tea.Msg { return collectWeatherCmd(oneShot) },
 	}
 
 	if !m.TestMode {
@@ -307,7 +366,10 @@ func (m *Model) currentEditableConfig() config.Config {
 			Weather: m.weatherRefreshInterval,
 		},
 		Docker: config.DockerConfig{
-			Host: m.dockerHost,
+			Host: m.configDockerHost,
+		},
+		Logs: config.LogsConfig{
+			Order: m.configLogOrder,
 		},
 	}
 }
@@ -332,30 +394,38 @@ func (m *Model) errorIfSettingsHidden() {
 }
 
 func (m *Model) applyRuntimeConfig(cfg config.Config) tea.Cmd {
-	m.themeName = normalizeThemeName(cfg.Theme)
-	_ = styles.ApplyNamed(m.themeName)
+	m.themeName, _ = styles.ApplyTheme(cfg.Theme, m.darkBackground)
 	applyThemedTextInputStyles(&m.searchInput)
 	applyThemedTextInputStyles(&m.logSearchInput)
 	m.disks = append([]config.Disk(nil), cfg.System.Disks...)
 	m.systemRefreshInterval = cfg.Refresh.System
 	m.dockerRefreshInterval = cfg.Refresh.Docker
 	m.weatherRefreshInterval = cfg.Refresh.Weather
+	m.configDockerHost = strings.TrimSpace(cfg.Docker.Host)
+	m.configLogOrder = cfg.Logs.Order
 	m.dockerHost = cfg.EffectiveDockerHost()
 	collector.SetDockerHost(m.dockerHost)
 	m.tickEpoch++
 	m.recalcLayout()
 
-	if m.TestMode {
-		return nil
+	var cmds []tea.Cmd
+	if env := strings.TrimSpace(os.Getenv("DOCKER_HOST")); env != "" && m.configDockerHost != "" && m.configDockerHost != env {
+		cmds = append(cmds, m.pushNotify(
+			fmt.Sprintf("docker.host saved, but DOCKER_HOST=%s overrides it for this session", env), levelWarning))
 	}
-	return tea.Batch(
-		func() tea.Msg { return collectSystemCmd(m.disks) },
-		func() tea.Msg { return collectDockerCmd() },
-		func() tea.Msg { return collectWeatherCmd() },
+
+	if m.TestMode {
+		return tea.Batch(cmds...)
+	}
+	cmds = append(cmds,
+		func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+		func() tea.Msg { return collectDockerCmd(oneShot) },
+		func() tea.Msg { return collectWeatherCmd(oneShot) },
 		systemTickCmd(m.disks, m.systemRefreshInterval, m.tickEpoch),
 		dockerTickCmd(m.dockerRefreshInterval, m.tickEpoch),
 		weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch),
 	)
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -436,11 +506,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.FocusMsg:
 		m.focused = true
 		if m.viewMode == ViewDashboard && !m.TestMode {
+			// The chains died while unfocused (ticks stop scheduling). Bump
+			// the epoch so anything still in flight is discarded, and start
+			// fresh chains: these collects carry the new epoch, so their
+			// results schedule the next ticks.
 			m.tickEpoch++
+			epoch := m.tickEpoch
 			return m, tea.Batch(
-				func() tea.Msg { return collectSystemCmd(m.disks) },
-				func() tea.Msg { return collectDockerCmd() },
-				func() tea.Msg { return collectWeatherCmd() },
+				func() tea.Msg { return collectSystemCmd(m.disks, epoch) },
+				func() tea.Msg { return collectDockerCmd(epoch) },
+				func() tea.Msg { return collectWeatherCmd(epoch) },
 			)
 		}
 		return m, nil
@@ -472,7 +547,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectSystemCmd(m.disks) }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectSystemCmd(m.disks, epoch) }
 
 	case DockerTickMsg:
 		if msg.Epoch != m.tickEpoch {
@@ -481,7 +557,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectDockerCmd() }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectDockerCmd(epoch) }
 
 	case WeatherTickMsg:
 		if msg.Epoch != m.tickEpoch {
@@ -490,7 +567,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectWeatherCmd() }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectWeatherCmd(epoch) }
 
 	case SystemDataMsg:
 		m.refreshing = false
@@ -526,7 +604,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.systemErr = msg.Err
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
+			// A one-off refresh, or a chain retired by an epoch bump.
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -637,7 +716,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.recalcLayout()
 		}
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -685,7 +764,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionResult = fmt.Sprintf("Success: %s %s", msg.Action, containerID[:min(8, len(containerID))])
 		}
 		cmds := []tea.Cmd{
-			func() tea.Msg { return collectDockerCmd() },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
 			clearActionResultCmd(),
 		}
 		if m.viewMode == ViewDetail && m.detailContainerID != "" {
@@ -714,7 +793,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clearDashboardAction()
 		cmds := []tea.Cmd{
-			func() tea.Msg { return collectDockerCmd() },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
 			clearActionResultCmd(),
 		}
 		if m.viewMode == ViewDetail && msg.StackName == m.detailStackName {
@@ -745,7 +824,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.weatherErr = nil
 			m.weatherWasOK = true
 			m.weatherRetries = 0
-			if m.TestMode {
+			if m.TestMode || msg.Epoch != m.tickEpoch {
 				return m, nil
 			}
 			if !m.focused && m.viewMode == ViewDashboard {
@@ -761,7 +840,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notifCmds = append(notifCmds, cmd)
 			}
 		}
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -797,6 +876,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logFollowing = false
 			m.logFollowCancel = nil
 			m.logFollowCh = nil
+			m.logFollowErrCh = nil
+			if msg.Err != nil {
+				// The stream failed rather than ending. Without this the
+				// panel would sit on "Loading logs..." forever, since the
+				// stream was the only fetch. Do not auto-restart into the
+				// same failure.
+				if len(m.detailLogs) == 0 {
+					m.detailLogsErr = msg.Err
+					return m, nil
+				}
+				m.actionResult = fmt.Sprintf("Log stream ended: %v", msg.Err)
+				return m, clearActionResultCmd()
+			}
 			// Auto-restart follow after a delay if still in detail view.
 			// This handles container restarts where the stream dies but
 			// the user wants to keep watching logs.
@@ -807,7 +899,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		wasAtBottom := m.isFollowAtBottom()
+		wasPinned := m.isFollowPinned()
 		m.detailLogs = append(m.detailLogs, msg.Line)
 		// Cap at 1000 lines
 		if len(m.detailLogs) > 1000 {
@@ -822,15 +914,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logSearchMatches = append(m.logSearchMatches, len(m.detailLogs)-1)
 			}
 		}
-		// Auto-scroll to bottom if user was at bottom
-		if wasAtBottom {
-			maxScroll := len(m.detailLogs) - m.detailLogRows
-			if maxScroll < 0 {
-				maxScroll = 0
-			}
-			m.detailScrollOffset = maxScroll
+		// Keep the newest line in view if the user had not scrolled away.
+		if wasPinned {
+			m.detailScrollOffset = m.followPinOffset()
 		}
-		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
+		return m, logFollowCmd(m.logFollowCh, m.logFollowErrCh, m.logFollowSeq)
+	case tea.BackgroundColorMsg:
+		// The terminal reported its background. Re-resolve the active theme
+		// so a light terminal gets the light variant, and refresh the styles
+		// cached inside the text inputs, which Apply cannot reach.
+		if isDark := msg.IsDark(); isDark != m.darkBackground {
+			m.darkBackground = isDark
+			styles.ReapplyForBackground(isDark)
+			applyThemedTextInputStyles(&m.searchInput)
+			applyThemedTextInputStyles(&m.logSearchInput)
+		}
+		return m, nil
+	case UpdateCheckMsg:
+		m.updateChecking = false
+		m.updateCheckedAt = time.Now()
+		if msg.Err != nil {
+			return m, m.pushNotify("Update check failed: "+msg.Err.Error(), levelError)
+		}
+
+		m.imageUpdates = make(map[string]registry.Status, len(msg.Statuses))
+		available, failed := 0, 0
+		for _, s := range msg.Statuses {
+			m.imageUpdates[s.Ref] = s
+			switch s.State {
+			case registry.StateAvailable:
+				available++
+			case registry.StateError:
+				failed++
+			}
+		}
+
+		// Report unchecked images explicitly. Silently showing "no updates"
+		// when some images could not be reached would be misleading.
+		summary := "All images up to date"
+		level := levelInfo
+		if available > 0 {
+			summary = fmt.Sprintf("%d image update(s) available", available)
+			level = levelWarning
+		}
+		if failed > 0 {
+			summary += fmt.Sprintf(" — %d image(s) could not be checked", failed)
+		}
+		return m, m.pushNotify(summary, level)
+
+	case configWarningsMsg:
+		var cmds []tea.Cmd
+		for _, w := range msg.warnings {
+			if cmd := m.pushNotify(w, levelWarning); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
+		}
+		return m, nil
 	case followRestartMsg:
 		// Auto-restart follow if still in stack detail view and not already following
 		if m.viewMode == ViewDetail && m.detailStackName != "" && !m.logFollowing {
@@ -849,6 +991,7 @@ func (m *Model) stopFollowing() {
 		}
 		m.logFollowing = false
 		m.logFollowCancel = nil
+		m.logFollowErrCh = nil
 		m.logFollowCh = nil
 	}
 }
@@ -860,11 +1003,13 @@ func (m *Model) startFollowing() tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan string, 64)
+	errCh := make(chan error, 1)
 
 	m.logFollowSeq++
 	m.logFollowing = true
 	m.logFollowCancel = cancel
 	m.logFollowCh = ch
+	m.logFollowErrCh = errCh
 
 	tail := 0
 	if m.detailLogs == nil {
@@ -875,12 +1020,19 @@ func (m *Model) startFollowing() tea.Cmd {
 	containers := append([]collector.Container(nil), m.dockerData.Containers...)
 
 	go func() {
+		// errCh is buffered and written before ch closes, so the reader
+		// that observes the close always finds the verdict waiting.
 		defer close(ch)
+		var err error
 		if stackName != "" {
-			_ = collector.StreamStackLogs(ctx, containers, stackName, tail, ch)
-			return
+			err = collector.StreamStackLogs(ctx, containers, stackName, tail, ch)
+		} else {
+			err = collector.StreamContainerLogs(ctx, containerID, tail, ch)
 		}
-		_ = collector.StreamContainerLogs(ctx, containerID, tail, ch)
+		if ctx.Err() != nil {
+			err = nil // cancelled by the UI, not a failure
+		}
+		errCh <- err
 	}()
 
 	// If logs are not loaded yet, let the follow stream provide the initial tail.
@@ -889,16 +1041,31 @@ func (m *Model) startFollowing() tea.Cmd {
 		m.detailScrollOffset = 0
 	}
 
-	return logFollowCmd(ch, m.logFollowSeq)
+	return logFollowCmd(ch, errCh, m.logFollowSeq)
 }
 
 // isFollowAtBottom returns true if scroll is at or near the bottom of logs.
-func (m *Model) isFollowAtBottom() bool {
+// followPinOffset is the scroll offset at which new lines stay in view.
+// Under newest-first that is the top of the panel; under oldest-first it is
+// the bottom, which is the pre-existing behaviour.
+func (m *Model) followPinOffset() int {
+	if m.logOrder == panels.LogOrderNewest {
+		return 0
+	}
 	maxScroll := len(m.detailLogs) - m.detailLogRows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	return m.detailScrollOffset >= maxScroll
+	return maxScroll
+}
+
+// isFollowPinned reports whether the view is parked where incoming lines
+// appear, meaning autoscroll should keep it there.
+func (m *Model) isFollowPinned() bool {
+	if m.logOrder == panels.LogOrderNewest {
+		return m.detailScrollOffset <= 0
+	}
+	return m.detailScrollOffset >= m.followPinOffset()
 }
 
 type quickMenuItem struct {
@@ -971,19 +1138,23 @@ func (m Model) renderQuickMenu(base string) string {
 		statusText = c.State
 	}
 
-	// Menu width adapts to target name
-	menuInner := len(titleText) + 6
+	// Menu width adapts to target name, within what the terminal allows.
+	// The floor keeps the arithmetic below non-negative on tiny panes.
+	menuInner := lipgloss.Width(titleText) + 6
 	if menuInner < 28 {
 		menuInner = 28
 	}
 	if menuInner > baseW-8 {
 		menuInner = baseW - 8
 	}
+	if menuInner < 10 {
+		menuInner = 10
+	}
 
 	// Title bar: target name centered, state/summary on the right
 	name := titleText
-	if len(name) > menuInner-2 {
-		name = name[:menuInner-2]
+	if lipgloss.Width(name) > menuInner-2 {
+		name = ansi.Truncate(name, menuInner-2, "…")
 	}
 	nameStyled := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true).Render(name)
 	stateStyled := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(statusText)
@@ -1200,7 +1371,7 @@ func (m *Model) recalcLayout() {
 	case m.detailStackName != "":
 		infoPanelHeight = panels.StackDetailInfoPanelHeight(m.detailStackData(), m.width)
 	default:
-		infoPanelHeight = panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width)
+		infoPanelHeight = panels.DetailInfoPanelHeight(m.detailContainer, m.detailMeta, m.systemData.Hostname, m.width, m.detailUpdateInfo())
 	}
 	logPanel := m.height - infoPanelHeight - 1
 	if logPanel < 5 {
@@ -1390,10 +1561,10 @@ func (f dashboardFilter) Matches(c *collector.Container) bool {
 	state := strings.ToLower(c.State)
 	health := strings.ToLower(c.Health)
 
-	if !dashboardMatchAny(state, f.states) {
+	if !dashboardMatchExact(state, f.states) {
 		return false
 	}
-	if !dashboardMatchAny(health, f.health) {
+	if !dashboardMatchExact(healthFilterValue(health), f.health) {
 		return false
 	}
 	if !dashboardMatchAny(stack, f.stacks) {
@@ -1426,6 +1597,30 @@ func dashboardMatchAny(value string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// dashboardMatchExact is for enumerated fields. state and health have a fixed
+// vocabulary, and a substring match would let health:healthy select the
+// unhealthy containers it exists to exclude.
+func dashboardMatchExact(value string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if value == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// healthFilterValue maps the collector's "no healthcheck" sentinels onto the
+// word users type.
+func healthFilterValue(health string) string {
+	if health == "" || health == "-" {
+		return "none"
+	}
+	return health
 }
 
 func sortDashboardGroups(groups []*dashboardStackGroup, mode DashboardSortMode) {
@@ -1682,13 +1877,13 @@ func (m Model) renderDetail() string {
 			m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing, logSearch)
+			m.logFollowing, m.logOrder, logSearch)
 	} else {
 		detail = panels.RenderDetail(
 			m.detailContainer, m.detailMeta, m.systemData.Hostname, m.detailLogs, m.detailLogsErr,
 			m.confirmAction, m.actionResult,
 			m.detailScrollOffset, m.width, m.height,
-			m.logFollowing, logSearch)
+			m.logFollowing, m.logOrder, logSearch, m.detailUpdateInfo())
 	}
 	return lipgloss.NewStyle().
 		Background(styles.BgBase).
@@ -1714,6 +1909,9 @@ func (m Model) renderDashboard() string {
 			Collapsed:      item.Collapsed,
 			Container:      item.Container,
 		}
+		if item.Container != nil {
+			panelItems[i].UpdateAvailable = m.hasImageUpdate(item.Container.Image)
+		}
 	}
 	containersFreshness := dashboardFreshnessLabel(
 		m.dockerData.CollectedAt,
@@ -1734,7 +1932,8 @@ func (m Model) renderDashboard() string {
 		m.TestMode,
 		sortIndicatorLabel(m.dashboardSort),
 		m.visibleContainers,
-		containersFreshness)
+		containersFreshness,
+		m.updateSummaryLabel())
 
 	// Quick-action menu overlay
 	if m.quickMenuOpen {
@@ -1951,8 +2150,12 @@ func (m *Model) recomputeLogSearchMatches() {
 	}
 }
 
+// scrollToLogLine centres the view on a log line. lineIdx is a storage index
+// into detailLogs, so it is mapped through the active order to find the row
+// that line actually occupies on screen.
 func (m *Model) scrollToLogLine(lineIdx int) {
-	target := lineIdx - m.detailLogRows/2
+	renderIdx := m.logOrder.RenderIndex(lineIdx, len(m.detailLogs))
+	target := renderIdx - m.detailLogRows/2
 	if target < 0 {
 		target = 0
 	}
@@ -2074,4 +2277,77 @@ func renderedLineCount(s string) int {
 		return 0
 	}
 	return strings.Count(s, "\n") + 1
+}
+
+// hasImageUpdate reports whether a newer digest was found for an image
+// reference during the last check.
+func (m Model) hasImageUpdate(imageRef string) bool {
+	s, ok := m.imageUpdates[strings.TrimSpace(imageRef)]
+	return ok && s.State == registry.StateAvailable
+}
+
+// updateSummaryLabel is the container-panel header note about image updates.
+// Empty until a check has run, so the panel is unchanged for anyone who never
+// presses 'u'.
+func (m Model) updateSummaryLabel() string {
+	if m.updateChecking {
+		return "checking updates"
+	}
+	if len(m.imageUpdates) == 0 {
+		return ""
+	}
+
+	available, failed := 0, 0
+	for _, s := range m.imageUpdates {
+		switch s.State {
+		case registry.StateAvailable:
+			available++
+		case registry.StateError:
+			failed++
+		}
+	}
+
+	switch {
+	case available > 0 && failed > 0:
+		return fmt.Sprintf("%d updates, %d unchecked", available, failed)
+	case available > 0:
+		return fmt.Sprintf("%d updates", available)
+	case failed > 0:
+		// Never imply everything is current when some images failed.
+		return fmt.Sprintf("%d unchecked", failed)
+	default:
+		return "up to date"
+	}
+}
+
+// imageUpdateStatus returns the last check result for an image reference.
+func (m Model) imageUpdateStatus(imageRef string) (registry.Status, bool) {
+	s, ok := m.imageUpdates[strings.TrimSpace(imageRef)]
+	return s, ok
+}
+
+// detailUpdateInfo builds the detail panel's update rows for the container
+// currently open, or nil when no check has covered its image yet.
+func (m Model) detailUpdateInfo() *panels.UpdateInfo {
+	if m.detailContainer == nil {
+		return nil
+	}
+	status, ok := m.imageUpdateStatus(m.detailContainer.Image)
+	if !ok {
+		return nil
+	}
+
+	info := panels.UpdateInfo{
+		State:        status.State.String(),
+		LocalDigest:  status.LocalDigest,
+		RemoteDigest: status.RemoteDigest,
+		Reason:       status.Reason,
+		CheckedAt:    status.CheckedAt,
+	}
+	// The command comes from the container's own compose labels, so it is
+	// only available once the detail metadata has loaded.
+	if status.State == registry.StateAvailable && m.detailMeta != nil {
+		info.Command = panels.UpdateCommand(m.detailMeta.Labels)
+	}
+	return &info
 }

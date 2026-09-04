@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,7 +113,8 @@ type dockerContainer struct {
 type dockerStats struct {
 	CPUStats struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"` // cgroup v1 only
 		} `json:"cpu_usage"`
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 		OnlineCPUs     int    `json:"online_cpus"`
@@ -140,6 +142,77 @@ type containerStats struct {
 	MemUsed uint64
 	NetRx   uint64
 	NetTx   uint64
+}
+
+// containerCPUSample is one reading of a container's CPU counters.
+type containerCPUSample struct {
+	total  uint64 // container CPU time, ns
+	system uint64 // host CPU time, ns
+}
+
+// cpuSamples remembers the last counters seen per container so consecutive
+// ticks can be compared. The stats endpoint is queried with one-shot=true,
+// which returns a single reading and leaves precpu_stats zeroed, so the delta
+// the API documents is not there: dividing the container's cumulative CPU time
+// by the host's cumulative CPU time since boot yields a lifetime average that
+// never reflects what the container is doing now. Comparing against the
+// previous tick is what `docker stats` does internally between its two
+// samples. Workers fill this concurrently, hence the mutex.
+var (
+	cpuSamplesMu sync.Mutex
+	cpuSamples   = map[string]containerCPUSample{}
+)
+
+// cpuPercent returns the container's CPU usage since the previous reading,
+// as a percentage of one core (200% means two cores busy). The first reading
+// of a container has nothing to compare against and reports 0.
+func cpuPercent(id string, stats *dockerStats) float64 {
+	current := containerCPUSample{
+		total:  stats.CPUStats.CPUUsage.TotalUsage,
+		system: stats.CPUStats.SystemCPUUsage,
+	}
+
+	// A daemon that did fill precpu_stats (no one-shot support) is trusted
+	// as-is; it measured the interval itself.
+	previous := containerCPUSample{
+		total:  stats.PrecpuStats.CPUUsage.TotalUsage,
+		system: stats.PrecpuStats.SystemCPUUsage,
+	}
+	if previous.system == 0 {
+		cpuSamplesMu.Lock()
+		prev, ok := cpuSamples[id]
+		cpuSamples[id] = current
+		cpuSamplesMu.Unlock()
+		if !ok {
+			return 0
+		}
+		previous = prev
+	}
+
+	if current.total < previous.total || current.system <= previous.system {
+		return 0 // counters reset (container restarted) or clock went backwards
+	}
+	online := stats.CPUStats.OnlineCPUs
+	if online == 0 {
+		online = len(stats.CPUStats.CPUUsage.PercpuUsage)
+	}
+	if online == 0 {
+		online = runtime.NumCPU()
+	}
+	cpuDelta := float64(current.total - previous.total)
+	systemDelta := float64(current.system - previous.system)
+	return (cpuDelta / systemDelta) * float64(online) * 100.0
+}
+
+// pruneCPUSamples drops readings for containers that no longer exist.
+func pruneCPUSamples(live map[string]bool) {
+	cpuSamplesMu.Lock()
+	defer cpuSamplesMu.Unlock()
+	for id := range cpuSamples {
+		if !live[id] {
+			delete(cpuSamples, id)
+		}
+	}
 }
 
 func CollectDocker() (DockerData, error) {
@@ -188,6 +261,12 @@ func CollectDocker() (DockerData, error) {
 		}(i, c.ID)
 	}
 	wg.Wait()
+
+	live := make(map[string]bool, len(containers))
+	for _, c := range containers {
+		live[c.ID] = true
+	}
+	pruneCPUSamples(live)
 
 	for i, c := range containers {
 		name := ""
@@ -282,12 +361,7 @@ func fetchContainerStats(id string) containerStats {
 
 	var result containerStats
 
-	// CPU percentage
-	cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PrecpuStats.CPUUsage.TotalUsage)
-	systemDelta := float64(stats.CPUStats.SystemCPUUsage - stats.PrecpuStats.SystemCPUUsage)
-	if systemDelta > 0 && stats.CPUStats.OnlineCPUs > 0 {
-		result.CPUPct = (cpuDelta / systemDelta) * float64(stats.CPUStats.OnlineCPUs) * 100.0
-	}
+	result.CPUPct = cpuPercent(id, &stats)
 
 	// Memory (usage minus cache, guard underflow)
 	if stats.MemoryStats.Usage >= stats.MemoryStats.Stats.InactiveFile {
@@ -375,7 +449,7 @@ func processDockerLogChunk(remainder *string, chunk []byte, emit func(string) er
 			return nil
 		}
 
-		line := (*remainder)[:idx]
+		line := sanitizeTerminalText((*remainder)[:idx])
 		*remainder = (*remainder)[idx+1:]
 		if line == "" {
 			continue
@@ -391,7 +465,7 @@ func flushDockerLogRemainder(remainder *string, emit func(string) error) error {
 		return nil
 	}
 
-	line := *remainder
+	line := sanitizeTerminalText(*remainder)
 	*remainder = ""
 	if line == "" {
 		return nil
@@ -865,15 +939,17 @@ func InspectContainer(containerID string) (ContainerDetail, error) {
 		return detail, fmt.Errorf("docker inspect parse: %w", err)
 	}
 
-	detail.Labels = raw.Config.Labels
+	// Labels, the entrypoint and mount paths come from the image publisher
+	// and are rendered verbatim in the detail panel.
+	detail.Labels = sanitizeLabels(raw.Config.Labels)
 	detail.RestartPolicy = formatRestartPolicy(raw.HostConfig.RestartPolicy.Name)
-	detail.Command = formatContainerCommand(raw.Path, raw.Args)
+	detail.Command = sanitizeTerminalText(formatContainerCommand(raw.Path, raw.Args))
 	detail.CreatedAt = parseDockerTimestamp(raw.Created)
 	detail.StartedAt = parseDockerTimestamp(raw.State.StartedAt)
 	for _, m := range raw.Mounts {
 		detail.Mounts = append(detail.Mounts, Mount{
-			Source:      m.Source,
-			Destination: m.Destination,
+			Source:      sanitizeTerminalText(m.Source),
+			Destination: sanitizeTerminalText(m.Destination),
 			Mode:        m.Mode,
 			Type:        m.Type,
 		})

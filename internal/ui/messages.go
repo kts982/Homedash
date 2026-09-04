@@ -2,25 +2,36 @@ package ui
 
 import (
 	"github.com/kts982/homedash/internal/collector"
+	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
 )
 
 // SystemDataMsg carries updated system metrics.
+//
+// Epoch identifies the tick chain whose timer requested this collection. It
+// is oneShot for a refresh nobody scheduled (startup, `r`, the follow-up
+// after an action), and such a result must not schedule the next tick: only
+// the chain's own result continues the chain, otherwise every extra refresh
+// would add a permanent second chain and the poll rate would multiply.
 type SystemDataMsg struct {
-	Data collector.SystemData
-	Err  error
+	Data  collector.SystemData
+	Err   error
+	Epoch uint64
 }
 
-// DockerDataMsg carries updated Docker container data.
+// DockerDataMsg carries updated Docker container data. See SystemDataMsg
+// for Epoch.
 type DockerDataMsg struct {
-	Data collector.DockerData
-	Err  error
+	Data  collector.DockerData
+	Err   error
+	Epoch uint64
 }
 
-// WeatherDataMsg carries updated weather data.
+// WeatherDataMsg carries updated weather data. See SystemDataMsg for Epoch.
 type WeatherDataMsg struct {
-	Data collector.WeatherData
-	Err  error
+	Data  collector.WeatherData
+	Err   error
+	Epoch uint64
 }
 
 // SystemTickMsg is sent by the periodic timer to trigger system collection.
@@ -31,9 +42,6 @@ type DockerTickMsg struct{ Epoch uint64 }
 
 // WeatherTickMsg is sent by the periodic timer to trigger weather collection.
 type WeatherTickMsg struct{ Epoch uint64 }
-
-// ForceRefreshMsg triggers an immediate refresh of all data.
-type ForceRefreshMsg struct{}
 
 // ContainerLogsMsg carries fetched container logs.
 type ContainerLogsMsg struct {
@@ -72,12 +80,25 @@ type ClearActionResultMsg struct{}
 type LogFollowLineMsg struct {
 	Line string
 	Done bool   // true when stream ends (container stopped, context cancelled)
+	Err  error  // with Done: the stream failed rather than ending or being cancelled
 	Seq  uint64 // session counter to discard stale messages
 }
 
 // followRestartMsg triggers an automatic restart of log following after
 // a stream ends unexpectedly (e.g. container restart).
 type followRestartMsg struct{}
+
+// configWarningsMsg carries non-fatal problems found while loading config, so
+// they surface as notifications rather than blocking startup.
+type configWarningsMsg struct {
+	warnings []string
+}
+
+// UpdateCheckMsg carries the result of a manual image update check.
+type UpdateCheckMsg struct {
+	Statuses []registry.Status
+	Err      error
+}
 
 // CollapseSaveTickMsg fires after debounce delay to trigger save.
 type CollapseSaveTickMsg struct{ Seq uint64 }

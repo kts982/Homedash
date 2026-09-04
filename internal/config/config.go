@@ -20,6 +20,12 @@ const (
 	defaultDockerHost = "unix:///var/run/docker.sock"
 )
 
+// Accepted values for logs.order.
+const (
+	LogOrderNewest = "newest"
+	LogOrderOldest = "oldest"
+)
+
 var localMountPrefixes = []string{
 	"/mnt",
 	"/media",
@@ -48,6 +54,16 @@ type Config struct {
 	System  SystemConfig  `yaml:"system"`
 	Refresh RefreshConfig `yaml:"refresh"`
 	Docker  DockerConfig  `yaml:"docker"`
+	Logs    LogsConfig    `yaml:"logs"`
+
+	// Warnings holds non-fatal problems found while loading, for the UI to
+	// surface once it is up. A cosmetic setting must never prevent startup,
+	// so a bad value lands here instead of being returned as an error.
+	Warnings []string `yaml:"-"`
+}
+
+type LogsConfig struct {
+	Order string `yaml:"order"`
 }
 
 type SystemConfig struct {
@@ -82,6 +98,9 @@ type fileConfig struct {
 	Docker struct {
 		Host string `yaml:"host"`
 	} `yaml:"docker"`
+	Logs struct {
+		Order string `yaml:"order"`
+	} `yaml:"logs"`
 }
 
 func Default() Config {
@@ -96,6 +115,28 @@ func Default() Config {
 			Docker:  5 * time.Second,
 			Weather: 5 * time.Minute,
 		},
+		Logs: LogsConfig{
+			Order: LogOrderNewest,
+		},
+	}
+}
+
+// normalizeLogOrder maps a configured value onto a known order. An
+// unrecognised value falls back to the default and returns a warning rather
+// than an error: log order is a display preference, and failing the load
+// would let a typo prevent startup entirely.
+func normalizeLogOrder(value string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return LogOrderNewest, ""
+	case LogOrderNewest:
+		return LogOrderNewest, ""
+	case LogOrderOldest:
+		return LogOrderOldest, ""
+	default:
+		return LogOrderNewest, fmt.Sprintf(
+			"config: logs.order %q is not %s or %s — using %s",
+			value, LogOrderNewest, LogOrderOldest, LogOrderNewest)
 	}
 }
 
@@ -161,6 +202,11 @@ func Load() (Config, error) {
 	if theme := strings.TrimSpace(parsed.Theme); theme != "" {
 		cfg.Theme = theme
 	}
+	order, orderWarning := normalizeLogOrder(parsed.Logs.Order)
+	cfg.Logs.Order = order
+	if orderWarning != "" {
+		cfg.Warnings = append(cfg.Warnings, orderWarning)
+	}
 
 	for i, disk := range cfg.System.Disks {
 		normalized, err := validateDisk(i, disk)
@@ -192,6 +238,7 @@ func Save(cfg Config) error {
 	file.Refresh.Docker = normalized.Refresh.Docker.String()
 	file.Refresh.Weather = normalized.Refresh.Weather.String()
 	file.Docker.Host = strings.TrimSpace(normalized.Docker.Host)
+	file.Logs.Order = normalized.Logs.Order
 
 	raw, err := yaml.Marshal(&file)
 	if err != nil {
@@ -202,11 +249,23 @@ func Save(cfg Config) error {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
+	// Rename replaces the inode, so a user who tightened the permissions on
+	// their config would otherwise get them reset on every save.
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(configPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, raw, mode); err != nil {
 		return fmt.Errorf("write temp config %q: %w", tmpPath, err)
 	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("set config permissions %q: %w", tmpPath, err)
+	}
 	if err := os.Rename(tmpPath, configPath); err != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("replace config %q: %w", configPath, err)
 	}
 	return nil
@@ -361,6 +420,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	normalized.Theme = strings.TrimSpace(normalized.Theme)
 	normalized.Docker.Host = strings.TrimSpace(normalized.Docker.Host)
+	normalized.Logs.Order, _ = normalizeLogOrder(normalized.Logs.Order)
 	return normalized, nil
 }
 

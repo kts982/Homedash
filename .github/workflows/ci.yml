@@ -12,6 +12,9 @@ on:
       - "README.md"
       - "docs/**"
   workflow_dispatch:
+  schedule:
+    # Weekly vulnerability scan against the current Go module graph.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -62,8 +65,6 @@ jobs:
         run: go test -race ./...
 
   vulncheck:
-    if: github.event_name == 'workflow_dispatch'
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

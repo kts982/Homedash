@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/kts982/homedash/internal/collector"
@@ -12,9 +14,52 @@ import (
 	"github.com/kts982/homedash/internal/ui/styles"
 )
 
+// version is set by goreleaser through -ldflags "-X main.version=...".
+// Source builds fall back to the module version `go install` records, then to
+// the VCS revision, then to "dev".
+var version = "dev"
+
+func resolvedVersion() string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	var revision, modified string
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value
+		}
+	}
+	if revision == "" {
+		return version
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if modified == "true" {
+		revision += "-dirty"
+	}
+	return "dev-" + revision
+}
+
 func main() {
 	testMode := flag.Bool("test-mode", false, "Enable deterministic test mode (disables live refresh)")
+	showVersion := flag.Bool("version", false, "Print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("homedash " + resolvedVersion())
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -22,22 +67,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := styles.ApplyNamed(cfg.Theme); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	// Assume a dark terminal until the real background is reported via
+	// tea.BackgroundColorMsg, which arrives through Update shortly after
+	// start. An unrecognised theme is a warning, never a startup failure.
+	applied, known := styles.ApplyTheme(cfg.Theme, true)
+	if !known {
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
+			"config: theme %q is not recognised — using %s (available: %s)",
+			cfg.Theme, applied, strings.Join(styles.ThemeIDs(), ", ")))
 	}
 
-	dockerHost := cfg.EffectiveDockerHost()
-	collector.SetDockerHost(dockerHost)
+	collector.SetDockerHost(cfg.EffectiveDockerHost())
 
 	p := tea.NewProgram(
 		ui.NewModel(ui.ModelOptions{
-			Theme:                  cfg.Theme,
+			Theme:                  applied,
 			Disks:                  cfg.System.Disks,
-			DockerHost:             dockerHost,
+			DockerHost:             cfg.Docker.Host,
 			SystemRefreshInterval:  cfg.Refresh.System,
 			DockerRefreshInterval:  cfg.Refresh.Docker,
 			WeatherRefreshInterval: cfg.Refresh.Weather,
+			LogOrder:               cfg.Logs.Order,
+			ConfigWarnings:         cfg.Warnings,
 			TestMode:               *testMode,
 		}),
 	)

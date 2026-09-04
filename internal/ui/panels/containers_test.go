@@ -60,7 +60,7 @@ func TestRenderContainersShowsStackSummaryRow(t *testing.T) {
 			StartingCount:  1,
 			StoppedCount:   1,
 		},
-	}, 3, 4, 0, 0, 1, 90, true, input, false, false, "", 1, "")
+	}, 3, 4, 0, 0, 1, 90, true, input, false, false, "", 1, "", "")
 	plain := stripANSI(view)
 
 	for _, want := range []string{"3/4 up", "1 unhealthy", "1 starting", "1 stopped"} {
@@ -79,7 +79,7 @@ func TestRenderContainersShowsStackSummaryRow(t *testing.T) {
 func TestRenderContainersShowsSortAndShownCounts(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("state:running")
-	view := RenderContainers(nil, 2, 3, 0, 0, 1, 100, true, input, false, false, "cpu", 2, "2s ago")
+	view := RenderContainers(nil, 2, 3, 0, 0, 1, 100, true, input, false, false, "cpu", 2, "2s ago", "")
 	plain := stripANSI(view)
 
 	for _, want := range []string{"2 shown", "sort:cpu", "2s ago", "No containers match current filter"} {
@@ -90,8 +90,8 @@ func TestRenderContainersShowsSortAndShownCounts(t *testing.T) {
 }
 
 func TestRenderContainerSortSummaryUsesSeparateStyles(t *testing.T) {
-	if err := styles.ApplyNamed("tokyo-night"); err != nil {
-		t.Fatalf("ApplyNamed() error = %v", err)
+	if _, known := styles.ApplyTheme("tokyo-night", true); !known {
+		t.Fatal("ApplyTheme(\"tokyo-night\") reported the theme as unknown")
 	}
 
 	rendered := renderContainerSortSummary("cpu")
