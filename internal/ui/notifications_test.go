@@ -93,23 +93,23 @@ func TestNotificationQueueEmpty(t *testing.T) {
 }
 
 func TestFormatAlertTimestamp(t *testing.T) {
-	now := time.Date(2026, 3, 16, 14, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 16, 14, 30, 0, 0, time.Local)
 
-	if got := formatAlertTimestamp(time.Date(2026, 3, 16, 14, 23, 4, 0, time.UTC), now); got != "14:23:04" {
+	if got := formatAlertTimestamp(time.Date(2026, 3, 16, 14, 23, 4, 0, time.Local), now); got != "14:23:04" {
 		t.Fatalf("formatAlertTimestamp(same day) = %q, want %q", got, "14:23:04")
 	}
-	if got := formatAlertTimestamp(time.Date(2026, 3, 15, 9, 5, 6, 0, time.UTC), now); got != "Mar15 09:05:06" {
+	if got := formatAlertTimestamp(time.Date(2026, 3, 15, 9, 5, 6, 0, time.Local), now); got != "Mar15 09:05:06" {
 		t.Fatalf("formatAlertTimestamp(other day) = %q, want %q", got, "Mar15 09:05:06")
 	}
 }
 
 func TestRenderAlertsPanelShowsTimestampsForRecentEvents(t *testing.T) {
-	now := time.Date(2026, 3, 16, 14, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 16, 14, 30, 0, 0, time.Local)
 	view := renderAlertsPanelAt(
 		nil,
 		[]notification{
-			{Message: "web health healthy -> unhealthy", Level: levelError, At: time.Date(2026, 3, 16, 14, 23, 4, 0, time.UTC)},
-			{Message: "Disk /data at 91%", Level: levelWarning, At: time.Date(2026, 3, 15, 9, 5, 6, 0, time.UTC)},
+			{Message: "web health healthy -> unhealthy", Level: levelError, At: time.Date(2026, 3, 16, 14, 23, 4, 0, time.Local)},
+			{Message: "Disk /data at 91%", Level: levelWarning, At: time.Date(2026, 3, 15, 9, 5, 6, 0, time.Local)},
 		},
 		120,
 		now,

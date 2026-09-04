@@ -21,19 +21,23 @@ type stackActionTarget struct {
 	Name string
 }
 
-func collectSystemCmd(disks []config.Disk) tea.Msg {
+// oneShot is the Epoch of a collection no tick chain asked for. Model epochs
+// start at 1, so it never matches a live chain.
+const oneShot uint64 = 0
+
+func collectSystemCmd(disks []config.Disk, epoch uint64) tea.Msg {
 	data, err := collector.CollectSystem(disks)
-	return SystemDataMsg{Data: data, Err: err}
+	return SystemDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
-func collectDockerCmd() tea.Msg {
+func collectDockerCmd(epoch uint64) tea.Msg {
 	data, err := collector.CollectDocker()
-	return DockerDataMsg{Data: data, Err: err}
+	return DockerDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
-func collectWeatherCmd() tea.Msg {
+func collectWeatherCmd(epoch uint64) tea.Msg {
 	data, err := collector.CollectWeather()
-	return WeatherDataMsg{Data: data, Err: err}
+	return WeatherDataMsg{Data: data, Err: err, Epoch: epoch}
 }
 
 func systemTickCmd(disks []config.Disk, interval time.Duration, epoch uint64) tea.Cmd {
@@ -142,12 +146,14 @@ func clearActionResultCmd() tea.Cmd {
 	})
 }
 
-// logFollowCmd reads the next line from the follow channel.
-func logFollowCmd(ch <-chan string, seq uint64) tea.Cmd {
+// logFollowCmd reads the next line from the follow channel. When the channel
+// closes, the stream's terminal error (nil for EOF or cancellation) is
+// waiting on errCh: the producer sends it before closing ch.
+func logFollowCmd(ch <-chan string, errCh <-chan error, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
 		if !ok {
-			return LogFollowLineMsg{Done: true, Seq: seq}
+			return LogFollowLineMsg{Done: true, Err: <-errCh, Seq: seq}
 		}
 		return LogFollowLineMsg{Line: line, Seq: seq}
 	}

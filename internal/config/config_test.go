@@ -395,3 +395,32 @@ func TestSaveRoundTripsLogOrder(t *testing.T) {
 		t.Errorf("Logs.Order after round trip = %q, want %q", loaded.Logs.Order, LogOrderOldest)
 	}
 }
+
+func TestSavePreservesExistingFileMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "homedash", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("theme: nord\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Theme = "dracula"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600 (a user's tightened permissions must survive a save)", got)
+	}
+	if _, err := os.Stat(configPath + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+}

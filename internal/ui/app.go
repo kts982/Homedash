@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kts982/homedash/internal/collector"
 	"github.com/kts982/homedash/internal/collector/registry"
 	"github.com/kts982/homedash/internal/config"
@@ -122,6 +124,12 @@ type Model struct {
 	themeName   string
 	disks       []config.Disk
 	dockerHost  string
+	// configDockerHost and configLogOrder are the values as written in the
+	// config file. They are kept apart from the runtime values so that a
+	// DOCKER_HOST override or a per-session `o` toggle is never written
+	// back to disk by the options dialog.
+	configDockerHost string
+	configLogOrder   string
 
 	cpuHistory      *components.RingBuffer
 	ramHistory      *components.RingBuffer
@@ -203,6 +211,7 @@ type Model struct {
 	logFollowing    bool
 	logFollowCancel context.CancelFunc
 	logFollowCh     <-chan string
+	logFollowErrCh  <-chan error
 	logFollowSeq    uint64 // session counter to discard stale messages
 
 	// Collapse persistence
@@ -244,10 +253,10 @@ func NewModel(options ModelOptions) Model {
 		disks = defaults.System.Disks
 	}
 
-	dockerHost := strings.TrimSpace(options.DockerHost)
-	if dockerHost == "" {
-		dockerHost = defaults.EffectiveDockerHost()
-	}
+	// options.DockerHost is the configured value; the environment still
+	// takes precedence at runtime.
+	configDockerHost := strings.TrimSpace(options.DockerHost)
+	dockerHost := config.Config{Docker: config.DockerConfig{Host: configDockerHost}}.EffectiveDockerHost()
 
 	systemRefresh := options.SystemRefreshInterval
 	if systemRefresh <= 0 {
@@ -277,6 +286,8 @@ func NewModel(options ModelOptions) Model {
 		darkBackground:         true,
 		disks:                  disks,
 		dockerHost:             dockerHost,
+		configDockerHost:       configDockerHost,
+		configLogOrder:         logOrderConfigValue(logOrderFromConfig(options.LogOrder)),
 		systemRefreshInterval:  systemRefresh,
 		dockerRefreshInterval:  dockerRefresh,
 		weatherRefreshInterval: weatherRefresh,
@@ -286,7 +297,17 @@ func NewModel(options ModelOptions) Model {
 		shownWarnings:          make(map[string]bool),
 		TestMode:               options.TestMode,
 		focused:                true,
+		// Epochs start at 1 so that oneShot (0) never matches a live chain.
+		tickEpoch: 1,
 	}
+}
+
+// logOrderConfigValue is the inverse of logOrderFromConfig.
+func logOrderConfigValue(order panels.LogOrder) string {
+	if order == panels.LogOrderOldest {
+		return config.LogOrderOldest
+	}
+	return config.LogOrderNewest
 }
 
 // logOrderFromConfig maps the config string onto the render enum. Unknown
@@ -314,10 +335,11 @@ func (m Model) Init() tea.Cmd {
 		tea.RequestBackgroundColor,
 		// Surface any non-fatal config problems found during load
 		func() tea.Msg { return configWarningsMsg{warnings: m.configWarnings} },
-		// Initial data collection
-		func() tea.Msg { return collectSystemCmd(m.disks) },
-		func() tea.Msg { return collectDockerCmd() },
-		func() tea.Msg { return collectWeatherCmd() },
+		// Initial data collection. These are one-offs: the tick timers
+		// below own the refresh chains.
+		func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+		func() tea.Msg { return collectDockerCmd(oneShot) },
+		func() tea.Msg { return collectWeatherCmd(oneShot) },
 	}
 
 	if !m.TestMode {
@@ -344,7 +366,10 @@ func (m *Model) currentEditableConfig() config.Config {
 			Weather: m.weatherRefreshInterval,
 		},
 		Docker: config.DockerConfig{
-			Host: m.dockerHost,
+			Host: m.configDockerHost,
+		},
+		Logs: config.LogsConfig{
+			Order: m.configLogOrder,
 		},
 	}
 }
@@ -376,22 +401,31 @@ func (m *Model) applyRuntimeConfig(cfg config.Config) tea.Cmd {
 	m.systemRefreshInterval = cfg.Refresh.System
 	m.dockerRefreshInterval = cfg.Refresh.Docker
 	m.weatherRefreshInterval = cfg.Refresh.Weather
+	m.configDockerHost = strings.TrimSpace(cfg.Docker.Host)
+	m.configLogOrder = cfg.Logs.Order
 	m.dockerHost = cfg.EffectiveDockerHost()
 	collector.SetDockerHost(m.dockerHost)
 	m.tickEpoch++
 	m.recalcLayout()
 
-	if m.TestMode {
-		return nil
+	var cmds []tea.Cmd
+	if env := strings.TrimSpace(os.Getenv("DOCKER_HOST")); env != "" && m.configDockerHost != "" && m.configDockerHost != env {
+		cmds = append(cmds, m.pushNotify(
+			fmt.Sprintf("docker.host saved, but DOCKER_HOST=%s overrides it for this session", env), levelWarning))
 	}
-	return tea.Batch(
-		func() tea.Msg { return collectSystemCmd(m.disks) },
-		func() tea.Msg { return collectDockerCmd() },
-		func() tea.Msg { return collectWeatherCmd() },
+
+	if m.TestMode {
+		return tea.Batch(cmds...)
+	}
+	cmds = append(cmds,
+		func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+		func() tea.Msg { return collectDockerCmd(oneShot) },
+		func() tea.Msg { return collectWeatherCmd(oneShot) },
 		systemTickCmd(m.disks, m.systemRefreshInterval, m.tickEpoch),
 		dockerTickCmd(m.dockerRefreshInterval, m.tickEpoch),
 		weatherTickCmd(m.weatherRefreshInterval, m.tickEpoch),
 	)
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -472,11 +506,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.FocusMsg:
 		m.focused = true
 		if m.viewMode == ViewDashboard && !m.TestMode {
+			// The chains died while unfocused (ticks stop scheduling). Bump
+			// the epoch so anything still in flight is discarded, and start
+			// fresh chains: these collects carry the new epoch, so their
+			// results schedule the next ticks.
 			m.tickEpoch++
+			epoch := m.tickEpoch
 			return m, tea.Batch(
-				func() tea.Msg { return collectSystemCmd(m.disks) },
-				func() tea.Msg { return collectDockerCmd() },
-				func() tea.Msg { return collectWeatherCmd() },
+				func() tea.Msg { return collectSystemCmd(m.disks, epoch) },
+				func() tea.Msg { return collectDockerCmd(epoch) },
+				func() tea.Msg { return collectWeatherCmd(epoch) },
 			)
 		}
 		return m, nil
@@ -508,7 +547,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectSystemCmd(m.disks) }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectSystemCmd(m.disks, epoch) }
 
 	case DockerTickMsg:
 		if msg.Epoch != m.tickEpoch {
@@ -517,7 +557,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectDockerCmd() }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectDockerCmd(epoch) }
 
 	case WeatherTickMsg:
 		if msg.Epoch != m.tickEpoch {
@@ -526,7 +567,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused && m.viewMode == ViewDashboard {
 			return m, nil
 		}
-		return m, func() tea.Msg { return collectWeatherCmd() }
+		epoch := msg.Epoch
+		return m, func() tea.Msg { return collectWeatherCmd(epoch) }
 
 	case SystemDataMsg:
 		m.refreshing = false
@@ -562,7 +604,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.systemErr = msg.Err
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
+			// A one-off refresh, or a chain retired by an epoch bump.
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -673,7 +716,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.recalcLayout()
 		}
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -721,7 +764,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionResult = fmt.Sprintf("Success: %s %s", msg.Action, containerID[:min(8, len(containerID))])
 		}
 		cmds := []tea.Cmd{
-			func() tea.Msg { return collectDockerCmd() },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
 			clearActionResultCmd(),
 		}
 		if m.viewMode == ViewDetail && m.detailContainerID != "" {
@@ -750,7 +793,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clearDashboardAction()
 		cmds := []tea.Cmd{
-			func() tea.Msg { return collectDockerCmd() },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
 			clearActionResultCmd(),
 		}
 		if m.viewMode == ViewDetail && msg.StackName == m.detailStackName {
@@ -781,7 +824,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.weatherErr = nil
 			m.weatherWasOK = true
 			m.weatherRetries = 0
-			if m.TestMode {
+			if m.TestMode || msg.Epoch != m.tickEpoch {
 				return m, nil
 			}
 			if !m.focused && m.viewMode == ViewDashboard {
@@ -797,7 +840,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notifCmds = append(notifCmds, cmd)
 			}
 		}
-		if m.TestMode {
+		if m.TestMode || msg.Epoch != m.tickEpoch {
 			return m, tea.Batch(notifCmds...)
 		}
 		if !m.focused && m.viewMode == ViewDashboard {
@@ -833,6 +876,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logFollowing = false
 			m.logFollowCancel = nil
 			m.logFollowCh = nil
+			m.logFollowErrCh = nil
+			if msg.Err != nil {
+				// The stream failed rather than ending. Without this the
+				// panel would sit on "Loading logs..." forever, since the
+				// stream was the only fetch. Do not auto-restart into the
+				// same failure.
+				if len(m.detailLogs) == 0 {
+					m.detailLogsErr = msg.Err
+					return m, nil
+				}
+				m.actionResult = fmt.Sprintf("Log stream ended: %v", msg.Err)
+				return m, clearActionResultCmd()
+			}
 			// Auto-restart follow after a delay if still in detail view.
 			// This handles container restarts where the stream dies but
 			// the user wants to keep watching logs.
@@ -862,7 +918,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wasPinned {
 			m.detailScrollOffset = m.followPinOffset()
 		}
-		return m, logFollowCmd(m.logFollowCh, m.logFollowSeq)
+		return m, logFollowCmd(m.logFollowCh, m.logFollowErrCh, m.logFollowSeq)
 	case tea.BackgroundColorMsg:
 		// The terminal reported its background. Re-resolve the active theme
 		// so a light terminal gets the light variant, and refresh the styles
@@ -935,6 +991,7 @@ func (m *Model) stopFollowing() {
 		}
 		m.logFollowing = false
 		m.logFollowCancel = nil
+		m.logFollowErrCh = nil
 		m.logFollowCh = nil
 	}
 }
@@ -946,11 +1003,13 @@ func (m *Model) startFollowing() tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan string, 64)
+	errCh := make(chan error, 1)
 
 	m.logFollowSeq++
 	m.logFollowing = true
 	m.logFollowCancel = cancel
 	m.logFollowCh = ch
+	m.logFollowErrCh = errCh
 
 	tail := 0
 	if m.detailLogs == nil {
@@ -961,12 +1020,19 @@ func (m *Model) startFollowing() tea.Cmd {
 	containers := append([]collector.Container(nil), m.dockerData.Containers...)
 
 	go func() {
+		// errCh is buffered and written before ch closes, so the reader
+		// that observes the close always finds the verdict waiting.
 		defer close(ch)
+		var err error
 		if stackName != "" {
-			_ = collector.StreamStackLogs(ctx, containers, stackName, tail, ch)
-			return
+			err = collector.StreamStackLogs(ctx, containers, stackName, tail, ch)
+		} else {
+			err = collector.StreamContainerLogs(ctx, containerID, tail, ch)
 		}
-		_ = collector.StreamContainerLogs(ctx, containerID, tail, ch)
+		if ctx.Err() != nil {
+			err = nil // cancelled by the UI, not a failure
+		}
+		errCh <- err
 	}()
 
 	// If logs are not loaded yet, let the follow stream provide the initial tail.
@@ -975,7 +1041,7 @@ func (m *Model) startFollowing() tea.Cmd {
 		m.detailScrollOffset = 0
 	}
 
-	return logFollowCmd(ch, m.logFollowSeq)
+	return logFollowCmd(ch, errCh, m.logFollowSeq)
 }
 
 // isFollowAtBottom returns true if scroll is at or near the bottom of logs.
@@ -1072,19 +1138,23 @@ func (m Model) renderQuickMenu(base string) string {
 		statusText = c.State
 	}
 
-	// Menu width adapts to target name
-	menuInner := len(titleText) + 6
+	// Menu width adapts to target name, within what the terminal allows.
+	// The floor keeps the arithmetic below non-negative on tiny panes.
+	menuInner := lipgloss.Width(titleText) + 6
 	if menuInner < 28 {
 		menuInner = 28
 	}
 	if menuInner > baseW-8 {
 		menuInner = baseW - 8
 	}
+	if menuInner < 10 {
+		menuInner = 10
+	}
 
 	// Title bar: target name centered, state/summary on the right
 	name := titleText
-	if len(name) > menuInner-2 {
-		name = name[:menuInner-2]
+	if lipgloss.Width(name) > menuInner-2 {
+		name = ansi.Truncate(name, menuInner-2, "…")
 	}
 	nameStyled := lipgloss.NewStyle().Foreground(styles.TextPrimary).Bold(true).Render(name)
 	stateStyled := lipgloss.NewStyle().Foreground(styles.TextSecondary).Render(statusText)
@@ -1491,10 +1561,10 @@ func (f dashboardFilter) Matches(c *collector.Container) bool {
 	state := strings.ToLower(c.State)
 	health := strings.ToLower(c.Health)
 
-	if !dashboardMatchAny(state, f.states) {
+	if !dashboardMatchExact(state, f.states) {
 		return false
 	}
-	if !dashboardMatchAny(health, f.health) {
+	if !dashboardMatchExact(healthFilterValue(health), f.health) {
 		return false
 	}
 	if !dashboardMatchAny(stack, f.stacks) {
@@ -1527,6 +1597,30 @@ func dashboardMatchAny(value string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// dashboardMatchExact is for enumerated fields. state and health have a fixed
+// vocabulary, and a substring match would let health:healthy select the
+// unhealthy containers it exists to exclude.
+func dashboardMatchExact(value string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if value == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// healthFilterValue maps the collector's "no healthcheck" sentinels onto the
+// word users type.
+func healthFilterValue(health string) string {
+	if health == "" || health == "-" {
+		return "none"
+	}
+	return health
 }
 
 func sortDashboardGroups(groups []*dashboardStackGroup, mode DashboardSortMode) {

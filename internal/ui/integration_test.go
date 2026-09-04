@@ -216,8 +216,56 @@ func TestIntegration_SettingsSaveAppliesConfig(t *testing.T) {
 	}
 
 	configPath := filepath.Join(tmpDir, "homedash", "config.yaml")
-	if _, err := os.Stat(configPath); err != nil {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
 		t.Fatalf("saved config file missing: %v", err)
+	}
+	if !strings.Contains(string(raw), "host: tcp://127.0.0.1:2375") {
+		t.Fatalf("saved config lacks the edited docker host:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "order: newest") {
+		t.Fatalf("saved config lost logs.order, a field the dialog does not edit:\n%s", raw)
+	}
+}
+
+// The options dialog must round-trip what is in the file, not what is in
+// effect: a DOCKER_HOST override would otherwise be baked into config.yaml
+// and a non-default logs.order silently reset to the default.
+func TestIntegration_SettingsSaveKeepsFileValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("DOCKER_HOST", "tcp://nas.example:2375")
+
+	m := newTestModeModel(t)
+	m.configLogOrder = config.LogOrderOldest
+	m, _ = applyKey(m, "O")
+	if got := m.settingsForm.dockerHost.Value(); got == "tcp://nas.example:2375" {
+		t.Fatalf("options dialog seeded the Docker host from DOCKER_HOST (%q), want the file value", got)
+	}
+	m.settingsForm.cycleTheme(1)
+	_ = m.settingsForm.focusCurrent()
+
+	updated, cmd := applyKey(m, "enter")
+	if cmd == nil {
+		t.Fatal("cmd = nil, want settings save command")
+	}
+	saved, _ := applyMsg(updated, cmd())
+	if saved.settingsOpen {
+		t.Fatal("settingsOpen = true after successful save")
+	}
+	if saved.dockerHost != "tcp://nas.example:2375" {
+		t.Fatalf("runtime dockerHost = %q, want the DOCKER_HOST override to stay in effect", saved.dockerHost)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmpDir, "homedash", "config.yaml"))
+	if err != nil {
+		t.Fatalf("saved config file missing: %v", err)
+	}
+	if !strings.Contains(string(raw), "order: oldest") {
+		t.Fatalf("logs.order was reset by the options dialog:\n%s", raw)
+	}
+	if strings.Contains(string(raw), "nas.example") {
+		t.Fatalf("DOCKER_HOST leaked into the config file:\n%s", raw)
 	}
 }
 
@@ -1007,9 +1055,9 @@ func TestFocus_FocusResumesDashboardTicks(t *testing.T) {
 		t.Fatal("Expected batch refresh command after FocusMsg")
 	}
 
-	// 3. Simulate data arrival (System) after focus
-	// It should now produce a new tick command because we are focused
-	_, cmd = m.Update(SystemDataMsg{Data: m.systemData})
+	// 3. Simulate data arrival (System) after focus. The refocus collect
+	// carries the new epoch, so its result continues the chain with a tick.
+	_, cmd = m.Update(SystemDataMsg{Data: m.systemData, Epoch: m.tickEpoch})
 	if cmd == nil {
 		t.Error("Expected tick command after SystemDataMsg while focused")
 	}
@@ -1026,9 +1074,9 @@ func TestFocus_BlurDoesNotPauseDetailTicks(t *testing.T) {
 	// 2. Lose focus
 	m, _ = applyMsg(m, tea.BlurMsg{})
 
-	// 3. Simulate data arrival (Docker)
+	// 3. Simulate data arrival (Docker) from the live chain
 	// It should STILL produce a tick command because we are in detail view
-	_, cmd := m.Update(DockerDataMsg{Data: m.dockerData})
+	_, cmd := m.Update(DockerDataMsg{Data: m.dockerData, Epoch: m.tickEpoch})
 	if cmd == nil {
 		t.Error("Expected tick command after DockerDataMsg while blurred in detail view")
 	}
@@ -1042,18 +1090,18 @@ func TestFocus_PendingTickDiscardedWhileBlurred(t *testing.T) {
 	m, _ = applyMsg(m, tea.BlurMsg{})
 
 	// 2. Simulate a pending tick firing (SystemTickMsg arrives while blurred)
-	// It should NOT trigger a collection command
-	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
+	// It should NOT trigger a collection command, even with the live epoch
+	_, cmd := m.Update(SystemTickMsg{Epoch: m.tickEpoch})
 	if cmd != nil {
 		t.Error("Expected no collection command when SystemTickMsg arrives while blurred on dashboard")
 	}
 
 	// 3. Same for Docker and Weather
-	_, cmd = m.Update(DockerTickMsg{Epoch: 0})
+	_, cmd = m.Update(DockerTickMsg{Epoch: m.tickEpoch})
 	if cmd != nil {
 		t.Error("Expected no collection command when DockerTickMsg arrives while blurred on dashboard")
 	}
-	_, cmd = m.Update(WeatherTickMsg{Epoch: 0})
+	_, cmd = m.Update(WeatherTickMsg{Epoch: m.tickEpoch})
 	if cmd != nil {
 		t.Error("Expected no collection command when WeatherTickMsg arrives while blurred on dashboard")
 	}
@@ -1063,26 +1111,26 @@ func TestFocus_OldPendingTickDiscardedAfterRefocus(t *testing.T) {
 	m := newTestModeModel(t)
 	m.TestMode = false
 
-	// 1. Lose focus (epoch stays 0)
+	// 1. Lose focus (epoch stays at its initial 1)
 	m, _ = applyMsg(m, tea.BlurMsg{})
 
-	// 2. Gain focus (epoch increments to 1)
+	// 2. Gain focus (epoch increments to 2)
 	m, _ = applyMsg(m, tea.FocusMsg{})
-	if m.tickEpoch != 1 {
-		t.Fatalf("tickEpoch = %d, want 1 after refocus", m.tickEpoch)
+	if m.tickEpoch != 2 {
+		t.Fatalf("tickEpoch = %d, want 2 after refocus", m.tickEpoch)
 	}
 
-	// 3. Simulate an OLD pending tick arriving (Epoch 0)
+	// 3. Simulate an OLD pending tick arriving (Epoch 1)
 	// It should be discarded even though we are focused now
-	_, cmd := m.Update(SystemTickMsg{Epoch: 0})
+	_, cmd := m.Update(SystemTickMsg{Epoch: 1})
 	if cmd != nil {
-		t.Error("Expected old SystemTickMsg (Epoch 0) to be discarded after refocus (Epoch 1)")
+		t.Error("Expected old SystemTickMsg (Epoch 1) to be discarded after refocus (Epoch 2)")
 	}
 
-	// 4. Simulate a NEW tick arriving (Epoch 1)
+	// 4. Simulate a NEW tick arriving (Epoch 2)
 	// It should be processed
-	_, cmd = m.Update(SystemTickMsg{Epoch: 1})
+	_, cmd = m.Update(SystemTickMsg{Epoch: 2})
 	if cmd == nil {
-		t.Error("Expected new SystemTickMsg (Epoch 1) to be processed")
+		t.Error("Expected new SystemTickMsg (Epoch 2) to be processed")
 	}
 }
