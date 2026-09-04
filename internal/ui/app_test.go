@@ -157,6 +157,39 @@ func TestRebuildDisplayItemsFilterMatchesHealthToken(t *testing.T) {
 	}
 }
 
+func TestRebuildDisplayItemsFilterHealthTokenIsExact(t *testing.T) {
+	m := newTestModel()
+	m.dockerData = collector.DockerData{
+		Containers: []collector.Container{
+			{Name: "web", Stack: "prod", State: "running", Health: "healthy"},
+			{Name: "worker", Stack: "prod", State: "running", Health: "unhealthy"},
+			{Name: "cache", Stack: "prod", State: "running", Health: "-"},
+		},
+	}
+
+	m.searchInput.SetValue("health:healthy")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 1 || m.displayItems[1].Container.Name != "web" {
+		t.Fatalf("health:healthy matched %d containers (first %q), want only web",
+			m.visibleContainers, m.displayItems[1].Container.Name)
+	}
+
+	// Containers without a healthcheck are addressable as health:none.
+	m.searchInput.SetValue("health:none")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 1 || m.displayItems[1].Container.Name != "cache" {
+		t.Fatalf("health:none matched %d containers, want only cache", m.visibleContainers)
+	}
+
+	// state: is exact too — "state:running" must not match "not running"-like values.
+	m.dockerData.Containers[2].State = "exited"
+	m.searchInput.SetValue("state:exit")
+	m.rebuildDisplayItems()
+	if m.visibleContainers != 0 {
+		t.Fatalf("state:exit (partial) matched %d containers, want 0", m.visibleContainers)
+	}
+}
+
 func TestRebuildDisplayItemsFilterAutoExpands(t *testing.T) {
 	m := newTestModel()
 	m.collapsedStacks["db"] = true
@@ -1860,5 +1893,70 @@ func TestUpdateCheckMsgErrorIsReported(t *testing.T) {
 	}
 	if m.notifications.len() == 0 {
 		t.Error("a failed update check should raise a notification")
+	}
+}
+
+// Only the tick chain's own result may schedule the next tick. Init, `r`, a
+// settings save and every action also fire an immediate collect; if those
+// results scheduled ticks too, each would start a permanent extra chain and
+// the poll rate would double at startup and grow with every `r`.
+func TestOneOffCollectionDoesNotContinueTickChain(t *testing.T) {
+	m := newTestModel()
+	m.focused = true
+	m.tickEpoch = 1
+	m.systemRefreshInterval = time.Second
+	m.dockerRefreshInterval = time.Second
+	m.weatherRefreshInterval = time.Minute
+
+	for _, msg := range []tea.Msg{
+		SystemDataMsg{Epoch: oneShot},
+		DockerDataMsg{Epoch: oneShot},
+		WeatherDataMsg{Epoch: oneShot},
+	} {
+		next, cmd := m.Update(msg)
+		m = next.(Model)
+		if cmd != nil {
+			t.Fatalf("%T with Epoch oneShot scheduled a command, want none", msg)
+		}
+	}
+
+	// A result from a chain retired by an epoch bump must not revive it.
+	next, cmd := m.Update(SystemDataMsg{Epoch: 7})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("SystemDataMsg from a stale epoch scheduled a command, want none")
+	}
+
+	// The live chain's own result does continue it.
+	for _, msg := range []tea.Msg{
+		SystemDataMsg{Epoch: 1},
+		DockerDataMsg{Epoch: 1},
+		WeatherDataMsg{Epoch: 1},
+	} {
+		next, cmd := m.Update(msg)
+		m = next.(Model)
+		if cmd == nil {
+			t.Fatalf("%T with the live epoch scheduled nothing, want the next tick", msg)
+		}
+	}
+}
+
+func TestFollowStreamFailureIsShownInsteadOfLoading(t *testing.T) {
+	m := newTestModel()
+	m.viewMode = ViewDetail
+	m.detailContainerID = "abc"
+	m.logFollowing = true
+	m.logFollowSeq = 3
+
+	next, cmd := m.Update(LogFollowLineMsg{Done: true, Err: errors.New("docker logs: status 404"), Seq: 3})
+	m = next.(Model)
+	if m.detailLogsErr == nil {
+		t.Fatal("detailLogsErr = nil after a failed stream, want the error surfaced")
+	}
+	if m.logFollowing {
+		t.Fatal("logFollowing = true after the stream failed")
+	}
+	if cmd != nil {
+		t.Fatal("a failed stream scheduled a command, want no auto-restart")
 	}
 }

@@ -33,6 +33,11 @@ type settingsDiskRow struct {
 }
 
 type settingsForm struct {
+	// base is the config the dialog was opened with. Fields the dialog does
+	// not expose (logs.order today) are carried through from it, so saving
+	// never silently resets them.
+	base config.Config
+
 	themeIndex int
 	focus      int
 	saving     bool
@@ -74,6 +79,7 @@ func applyThemedTextInputStyles(input *textinput.Model) {
 
 func newSettingsForm(cfg config.Config, themeName string) settingsForm {
 	form := settingsForm{
+		base:           cfg,
 		dockerHost:     newThemedTextInput(cfg.Docker.Host, "unix:///var/run/docker.sock", "", true),
 		systemRefresh:  newThemedTextInput(formatSettingsDuration(cfg.Refresh.System), "2s", "", true),
 		dockerRefresh:  newThemedTextInput(formatSettingsDuration(cfg.Refresh.Docker), "5s", "", true),
@@ -259,16 +265,15 @@ func (f *settingsForm) selectedTheme() string {
 }
 
 func (f *settingsForm) config() (config.Config, error) {
-	cfg := config.Config{
-		Theme: f.selectedTheme(),
-		Refresh: config.RefreshConfig{
-			System:  parseSettingsDuration("System refresh", f.systemRefresh.Value(), 1*time.Second),
-			Docker:  parseSettingsDuration("Docker refresh", f.dockerRefresh.Value(), 3*time.Second),
-			Weather: parseSettingsDuration("Weather refresh", f.weatherRefresh.Value(), 1*time.Minute),
-		},
-		Docker: config.DockerConfig{
-			Host: strings.TrimSpace(f.dockerHost.Value()),
-		},
+	cfg := f.base
+	cfg.Theme = f.selectedTheme()
+	cfg.Refresh = config.RefreshConfig{
+		System:  parseSettingsDuration("System refresh", f.systemRefresh.Value(), 1*time.Second),
+		Docker:  parseSettingsDuration("Docker refresh", f.dockerRefresh.Value(), 3*time.Second),
+		Weather: parseSettingsDuration("Weather refresh", f.weatherRefresh.Value(), 1*time.Minute),
+	}
+	cfg.Docker = config.DockerConfig{
+		Host: strings.TrimSpace(f.dockerHost.Value()),
 	}
 
 	disks := make([]config.Disk, 0, len(f.disks))

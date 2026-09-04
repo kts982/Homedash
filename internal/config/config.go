@@ -249,11 +249,23 @@ func Save(cfg Config) error {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
+	// Rename replaces the inode, so a user who tightened the permissions on
+	// their config would otherwise get them reset on every save.
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(configPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, raw, mode); err != nil {
 		return fmt.Errorf("write temp config %q: %w", tmpPath, err)
 	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("set config permissions %q: %w", tmpPath, err)
+	}
 	if err := os.Rename(tmpPath, configPath); err != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("replace config %q: %w", configPath, err)
 	}
 	return nil

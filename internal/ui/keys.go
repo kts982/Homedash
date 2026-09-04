@@ -324,7 +324,7 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 			m.ensureVisible()
 		}
 	case "enter":
-		if m.focusedPanel == PanelContainers && len(m.displayItems) > 0 {
+		if m.focusedPanel == PanelContainers && m.selectedIndex >= 0 && m.selectedIndex < len(m.displayItems) {
 			item := m.displayItems[m.selectedIndex]
 			if item.Kind == DisplayGroup {
 				m.collapsedStacks[item.StackName] = !m.collapsedStacks[item.StackName]
@@ -425,10 +425,11 @@ func handleDashboardKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 				func() tea.Msg { return collectMockWeatherCmd() },
 			)
 		}
+		// One-offs: the running tick chains keep their cadence.
 		return m, tea.Batch(
-			func() tea.Msg { return collectSystemCmd(m.disks) },
-			func() tea.Msg { return collectDockerCmd() },
-			func() tea.Msg { return collectWeatherCmd() },
+			func() tea.Msg { return collectSystemCmd(m.disks, oneShot) },
+			func() tea.Msg { return collectDockerCmd(oneShot) },
+			func() tea.Msg { return collectWeatherCmd(oneShot) },
 		)
 	case "/":
 		m.filtering = true
@@ -471,7 +472,10 @@ func handleMouse(msg tea.MouseMsg, m *Model) (tea.Model, tea.Cmd) {
 			}
 		case tea.MouseWheelDown:
 			if m.focusedPanel == PanelContainers {
-				maxOffset := len(m.displayItems) - m.containerRows
+				// containerRows can be 0 on a very short terminal; without
+				// the floor scrollOffset would reach len(displayItems) and
+				// drag selectedIndex out of range.
+				maxOffset := len(m.displayItems) - max(1, m.containerRows)
 				if maxOffset < 0 {
 					maxOffset = 0
 				}
@@ -578,6 +582,9 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 		case "y":
 			action := m.confirmAction
 			m.confirmAction = ""
+			// The stream is stopped only once the action is confirmed, so
+			// answering "n" leaves the live view exactly as it was.
+			m.stopFollowing()
 			if m.detailStackName != "" {
 				return m, stackActionCmd(m.dockerData.Containers, m.detailStackName, action)
 			}
@@ -683,31 +690,25 @@ func handleDetailKey(msg tea.KeyPressMsg, m *Model) (tea.Model, tea.Cmd) {
 	case "s":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.RunningCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "stop"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
-			m.stopFollowing()
 			m.confirmAction = "stop"
 		}
 	case "S":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.StoppedCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "start"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State != "running" {
-			m.stopFollowing()
 			m.confirmAction = "start"
 		}
 	case "R":
 		if stack := m.detailStackData(); stack != nil {
 			if stack.RunningCount > 0 {
-				m.stopFollowing()
 				m.confirmAction = "restart"
 			}
 		} else if m.detailContainer != nil && m.detailContainer.State == "running" {
-			m.stopFollowing()
 			m.confirmAction = "restart"
 		}
 	}
